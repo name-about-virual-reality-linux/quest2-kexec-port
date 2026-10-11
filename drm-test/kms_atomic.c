@@ -188,9 +188,23 @@ int main(int argc, char **argv)
 	void *buf = mmap(NULL, create.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
 	CHECK(buf != MAP_FAILED, "mmap");
 	uint32_t color = 0xFF20FF40; /* bright green this time, to tell apart from the earlier red/white flash */
-	for (size_t i = 0; i < create.size / 4; i++)
-		((uint32_t *)buf)[i] = color;
-	fprintf(stderr, "framebuffer filled with 0x%08x\n", color);
+	if (getenv("QKX_PATTERN")) {
+		/* Quadrants TL red, TR green, BL blue, BR white, black grid every 120px:
+		 * shows link/half geometry, and DSC damage lines up with 480px slices. */
+		static const uint32_t quad[4] = { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF };
+		for (uint32_t y = 0; y < create.height; y++) {
+			uint32_t *row = (uint32_t *)((char *)buf + (size_t)y * create.pitch);
+			for (uint32_t x = 0; x < create.width; x++) {
+				int q = (x >= create.width / 2) + 2 * (y >= create.height / 2);
+				row[x] = (x % 120 < 2 || y % 120 < 2) ? 0xFF000000 : quad[q];
+			}
+		}
+		fprintf(stderr, "framebuffer filled with quadrant test pattern\n");
+	} else {
+		for (size_t i = 0; i < create.size / 4; i++)
+			((uint32_t *)buf)[i] = color;
+		fprintf(stderr, "framebuffer filled with 0x%08x\n", color);
+	}
 
 	/* Create the MODE_ID blob. */
 	struct drm_mode_create_blob blob = {0};

@@ -1,0 +1,22 @@
+--- a/techpack/display/pll/dsi_pll_7nm.c
++++ b/techpack/display/pll/dsi_pll_7nm.c
+@@ -1518,6 +1518,19 @@
+ 	if (!pll->handoff_resources || pll->dfps_trigger) {
+ 		pll->cached_cfg0 = MDSS_PLL_REG_R(pll->phy_base,
+ 						  PHY_CMN_CLK_CFG0);
++		/*
++		 * qkx: cache the pclk mux (dsiclk_sel) together with the pclk
++		 * divider. prepare restores cfg0 from this cache, but cfg1 was
++		 * only cached on a cont-splash handoff, so after kexec the
++		 * bootloader's /3 divider got paired with a zero mux select
++		 * (bitclk instead of bitclk/2): pixel clock x2, DSI FIFO overflow.
++		 */
++		pll->cached_cfg1 = MDSS_PLL_REG_R(pll->phy_base,
++						  PHY_CMN_CLK_CFG1);
++		if (pll->slave)
++			pll->slave->cached_cfg1 =
++				MDSS_PLL_REG_R(pll->slave->phy_base,
++					       PHY_CMN_CLK_CFG1);
+ 		pll->cached_outdiv = MDSS_PLL_REG_R(pll->pll_base,
+ 						    PLL_PLL_OUTDIV_RATE);
+ 		pr_debug("cfg0=%d,cfg1=%d, outdiv=%d\n", pll->cached_cfg0,

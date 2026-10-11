@@ -2232,3 +2232,45 @@ unnamed in `sde_hw_pingpong.c`, sits between `PP_DSC_MODE` 0x0a0 and
 TOP `+0x008/+0x010/+0x014` (likely interrupt masks for Android's second,
 virtual-display CRTC). Diff command:
 `join -j1 <(sed 's/ = / /' A|sort) <(sed 's/ = / /' B|sort) | awk '$2!=$3'`.
+
+## 2026-10-11, later: root cause of the FIFO storm found — pixel clock runs at 2x after kexec
+
+**Measured, not inferred.** Register dump from a storming boot vs the Boot A
+dump where the image showed on both halves: the only meaningful difference
+is the DSI PHY pixel-clock path. `PHY_CMN_CLK_CFG0` (phy+0x010) pclk divider
+`[7:4]` and `PHY_CMN_CLK_CFG1` (phy+0x014) `dsiclk_sel` `[1:0]`:
+- Android: ÷3 with sel=1 (bitclk/2) → bitclk/6 ✓
+- Boot A (worked): ÷6 with sel=0 (bitclk) → bitclk/6 ✓
+- every storming boot: **÷3 with sel=0 → bitclk/3 = 2x pixel clock** ✗
+INTF pushes pixels twice as fast as the DSI link drains → overflow every
+frame. `clk_summary` still reports the correct rate (the clock framework's
+view is right, the hardware isn't), which is why all earlier clock checks
+passed.
+
+**Mechanism (dsi_pll_7nm.c):** `vco_7nm_unprepare()` caches `cached_cfg0`
+from hardware whenever not in a cont-splash handoff, but caches `cached_cfg1`
+only during a handoff. After kexec, prepare restores the bootloader's ÷3
+divider from `cached_cfg0` while `dsi_pll_enable()` writes the never-set
+`cached_cfg1` (0) into dsiclk_sel. Boot A likely escaped because Android's
+screen had timed out before the jump (PLL off, nothing stale to restore).
+
+**Live proof:** `drm-test/regdump/qkx_pclkfix.c` (one-shot module) rewrote
+both PHYs `0x31 → 0x61` mid-commit: overflows dropped 12253 → ~1800 per 5 s
+(not zero, because the recovery handler had already reset the DSI
+controllers by then).
+
+**Fix written, NOT yet verified:**
+`quest-kexec/kernel/display-patches/0002-dsi-pll-7nm-cache-pclk-mux-with-divider.patch`
+(cache cfg1 alongside cfg0 in unprepare, master and slave). Applied in the
+`qkx-target-ksrc` volume and built (Image sha `90ce4f83…`), but 5 kexec
+attempts in a row failed to come up and pstore kept no log, so it's unknown
+whether the patch or ordinary early-boot flakiness is to blame. Next: boot
+the known-good `build/working-display-2026-10-11/` payload to separate the
+two, then retry the patched build.
+
+**Ruled out this session (with measurements):** panel bias rails
+(`lcdb_ldo`/`lcdb_ncp`, `vddio`, `blu-mcu` are all enabled during commits;
+an earlier "disabled" reading was taken after the hold ended),
+`display_panel_avdd` (GPIO fixed regulator, no consumer; holding it on via
+`drm-test/regdump/qkx_regon.c` did not stop the storm), framebuffer content
+(solid vs pattern), and commit timing after boot.

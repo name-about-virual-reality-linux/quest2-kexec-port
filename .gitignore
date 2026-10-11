@@ -1,0 +1,39 @@
+# This directory has a lot of scratch/build/captured-data content that
+# isn't source for this repo (docker-volumes, holo-core, arch-rootfs,
+# build, captured-quest2, logs, vr-shell — vr-shell is its own separate
+# repo). Default-deny, then explicitly allow just the pieces that belong
+# here, rather than trying to list every large directory to exclude.
+/*
+!/quest-kexec/
+!/NOTES.md
+!/README.md
+!/drm-test/
+!/scratch_patch/
+!/.gitignore
+
+# Within quest-kexec/: a vendored busybox source+build tree (not ours),
+# plus compiled kernel-module / device-tool binaries that sit alongside
+# their own tracked .c/.h source — build output, not source.
+/quest-kexec/out/
+*.o
+*.ko
+*.ko.off
+*.ko.pre-adsp
+*.mod
+*.mod.c
+.*.cmd
+modules.order
+Module.symvers
+.tmp_versions/
+/quest-kexec/tools/device/qkx_rawcp
+/quest-kexec/tools/device/qkx_dm
+/quest-kexec/tools/device/qkx_fsmap
+*.apk
+/drm-test/kms_atomic
+/drm-test/kms_atomic2
+/drm-test/kms_test
+
+# quest-kexec's own .git, set aside during this import so it's tracked
+# here as plain files instead of a broken gitlink — not meant to be
+# committed itself.
+/quest-kexec/.git-disabled-temporarily/

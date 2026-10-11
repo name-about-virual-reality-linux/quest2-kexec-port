@@ -113,6 +113,16 @@ int main(int argc, char **argv)
 		c.props_ptr = 0; c.prop_values_ptr = 0; c.count_props = 0;
 		CHECK(ioctl(fd, DRM_IOCTL_MODE_GETCONNECTOR, &c) == 0, "GETCONNECTOR (full)");
 		mode = modes[0];
+		/* QKX_HZ: pick the first mode with this vrefresh (stock Android runs 90). */
+		const char *want_hz = getenv("QKX_HZ");
+		if (want_hz) {
+			uint32_t hz = (uint32_t)atoi(want_hz);
+			for (uint32_t m = 0; m < c.count_modes; m++)
+				if (modes[m].vrefresh == hz) {
+					mode = modes[m];
+					break;
+				}
+		}
 		chosen_conn = conn_ids[i];
 		chosen_enc = c.count_encoders ? encs[0] : 0;
 		have_mode = 1;
@@ -129,6 +139,10 @@ int main(int argc, char **argv)
 		if (ioctl(fd, DRM_IOCTL_MODE_GETENCODER, &e) == 0 && e.crtc_id)
 			chosen_crtc = e.crtc_id;
 	}
+	/* QKX_CRTC: force a CRTC index (stock Android drives the panel from sde-crtc-1). */
+	const char *want_crtc = getenv("QKX_CRTC");
+	if (want_crtc && (uint32_t)atoi(want_crtc) < res.count_crtcs)
+		chosen_crtc = crtc_ids[atoi(want_crtc)];
 	for (uint32_t i = 0; i < res.count_crtcs; i++)
 		if (crtc_ids[i] == chosen_crtc)
 			chosen_crtc_index = i;
@@ -267,8 +281,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "ATOMIC commit failed: errno=%d %s\n", errno, strerror(errno));
 		return 1;
 	}
-	fprintf(stderr, "ATOMIC commit succeeded. Holding for 15s so the screen can be checked...\n");
-	sleep(15);
+	int hold = getenv("QKX_HOLD") ? atoi(getenv("QKX_HOLD")) : 15;
+	fprintf(stderr, "ATOMIC commit succeeded (mode %ux%u@%u, clock %u). Holding for %ds so the screen can be checked...\n",
+		mode.hdisplay, mode.vdisplay, mode.vrefresh, mode.clock, hold);
+	sleep(hold);
 	fprintf(stderr, "done.\n");
 	return 0;
 }

@@ -37,3 +37,6 @@ Module.symvers
 # here as plain files instead of a broken gitlink — not meant to be
 # committed itself.
 /quest-kexec/.git-disabled-temporarily/
+/drm-test/kms_atomic3
+/drm-test/regdump/android/
+/drm-test/regdump/target/

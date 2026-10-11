@@ -1959,3 +1959,276 @@ PHY characteristic specific to never getting a truly cold (power-on, not
 kexec-warm) bring-up, which would need oscilloscope/protocol-analyzer-level
 signal inspection to diagnose further, not available in this setup.
 Stopping the live-device investigation here for tonight.
+
+## 2026-10-11, new session: bus/RSC bandwidth-vote theory tested directly and disproven; baseline symptom re-confirmed; one new decoded register, inconclusive
+
+**New session, picking up from the "Full tally."** Before touching hardware,
+re-read the entire display investigation and formed a new candidate theory:
+none of the exhausted avenues (clocks, INTF, CTL, DSC, cont-splash, PHY HW
+enable sequence) touch memory-bus/interconnect bandwidth voting for the
+display path, and FIFO underflow (observed even in the single-controller
+`SINGLEPIPE_DSC` test) is the textbook signature of bus bandwidth starvation,
+not a clock/encoder/PHY problem. Cloned the exact kernel source
+(`facebookincubator/oculus-linux-kernel` @ `6e428607`) into a scratch dir to
+verify this against real code before testing on hardware (not just
+speculation): confirmed `techpack/display/msm/sde/sde_core_perf.c` genuinely
+routes display bandwidth votes either straight to ICC or through the SDE RSC
+hardware sequencer (`sde_rsc_client_vote()`), and found that quest-kexec's
+own upstream patch (`kernel/patches/0001-...patch`) already adds bisection
+instrumentation to the **legacy `msm_bus` AP-side QoS-programming path**
+(`msm_bus_dev_init_qos()`), with a comment describing a real, confirmed
+kexec-specific hard-crash bug on one bus node (stale inherited clock-gating
+from the prior kernel causing a NoC QoS write to hard-reset the SoC) — this
+is genuine, directly-relevant prior evidence that kexec-inherited
+bus/interconnect state is a known failure class on this exact SoC family,
+not a stretch.
+
+**Deployed the already-built, already-DEBUG_FS/DYNAMIC_DEBUG-enabled
+`build/out-target/Image`** (confirmed via the docker volume's `.config`
+directly — the committed `build/out-target/target.config` snapshot in this
+repo is stale/out of date and should not be trusted; the real build config
+lives in the `qkx-target-out` docker volume). Regenerated the boot payload
+fresh via `tools/prepare.py` into `build/out-payload-fresh/` (the
+`build/out-payload/` dir in this repo predates the final target kernel build
+and should not be reused as-is).
+
+**Checked the display bus-bandwidth path directly, two ways:**
+1. `/sys/kernel/debug/msm-bus-dbg/client-data/{disp_rsc_ebi,disp_rsc_mnoc_llcc,disp_rsc_reg}`
+   — the real RSC-mediated bandwidth-vote client logs for the display path.
+2. Cross-referenced DT (`captured-quest2/runtime.dts`): the display's own
+   fabric nodes (`fab_gem_noc_display`, `fab_mmss_noc_display`) are marked
+   `qcom,bypass-qos-prg` — **by design**, the display bandwidth path skips
+   the legacy AP-side QoS-programming mechanism entirely (it's RSC-owned
+   instead). So the kexec-crash-prone `msm_bus_dev_init_qos()` path found
+   above, while real and interesting, **does not apply to the display path
+   at all** — a dead end for this specific theory, confirmed by DT, not by
+   assumption.
+
+**With that ruled out, checked the actual RSC-vote delivery path directly.**
+While holding a `kms_atomic2` commit: `disp_rsc_ebi`/`disp_rsc_mnoc_llcc`
+showed real, sane, non-zero bandwidth requests going active (16.6 GB/s EBI,
+8.3+8.3 GB/s mNOC — plausible numbers for this panel's mode, not zero/
+garbage), and dmesg showed the underlying RPMh commit
+(`qkxbus: commit rsc=8000 writes done ret=0 n=3/5`, `qkxbus: commit rsc
+invalidate`) firing repeatedly and succeeding throughout the hold. **This
+disproves the "no bandwidth vote happens" theory by direct measurement** —
+software requests real bandwidth and the RPMh commit reports success,
+repeatedly, same as every prior "software says success" finding this project
+has checked. (Could not rule out the deeper "vote succeeds in software but
+isn't honored in hardware" version of this theory — same unfalsifiable-
+without-a-scope shape as the panel-power-sequencing theory already on
+record — no tooling available to check that here.)
+
+**Baseline symptom re-confirmed, correlated live with the user watching:**
+ran `kms_atomic2` fresh (note: `/tmp` does not survive a return-to-Android +
+re-kexec cycle — re-`wget` the binary from the Mac's `python -m http.server`
+every fresh boot, forgot this once this session and got a false "dark"
+result from the test tool being missing, not a real symptom). User's live
+report: "alternation" — same as every prior session. dmesg showed the same
+FIFO overflow storm on both `dsi-ctrl-0`/`dsi-ctrl-1` as always.
+
+**One new thing decoded, inconclusive:** the existing `QKXDBG: fifo_overflow
+snapshot ctrl_idx=%d lane_status1=0x%08x` printk (`scratch_patch/dsi_display.c`,
+reads DSI PHY offset `0x14C` = `DSIPHY_CMN_LANE_STATUS1` directly) has been
+showing `0x1f` on both controllers every time this session but was never
+decoded before. Per `dsi_phy_hw_v4_0.c`'s own `stop_state_mask` usage,
+`0x1f` = `BIT(0)|BIT(1)|BIT(2)|BIT(3)|BIT(4)` = all 4 data lanes + the clock
+lane simultaneously in "stop state" (LP-11/idle) at the instant this handler
+runs. Plausibly just the expected post-fault settled state rather than
+anything diagnostic of the root cause, since this printk fires from a
+workqueue-scheduled handler, not the raw ISR — by the time it runs,
+real hardware recovery (`dsi_phy_hw_v4_0_lane_reset()` forces this exact
+same `0x1f` pattern via `DSIPHY_CMN_LANE_CTRL3` as part of normal recovery)
+may have already happened. Not pursued further; flagging so it isn't
+re-discovered as if new without this caveat.
+
+**Also hit and resolved, unrelated to display:** after a real `adb reboot`
+(needed once this session when insmod failed with "Invalid argument" and
+zero module-side dmesg, matching the documented stale-module-table pattern),
+the on-device `/data/local/tmp/qkx-Image` file was found zeroed out at its
+header (`ARM\x64` magic missing, all zero) — the kexec module's own
+`QKXDBG: fail at kernel header validation` printk confirmed this cleanly.
+Root cause not fully pinned down (plausibly: `adb push`'s write wasn't
+flushed to flash before `adb reboot`, which may not do a full graceful
+sync of all filesystems) — re-pushing the exact same (verified-intact
+locally) file fixed it immediately. Worth remembering: after any
+`adb reboot` in this project, re-verify payload file headers on-device
+before the next `insmod`, don't assume a previously-pushed file survived.
+
+**Net result: another real, evidence-based negative result** (bus/RSC
+bandwidth voting checks out as actually working, same as every other
+software layer checked across this whole investigation), plus two small
+reusable findings (the `bypass-qos-prg` DT fact, and the decoded-but-
+inconclusive `lane_status1=0x1f` meaning) for whoever picks this up next.
+The actual root cause remains open.
+
+## 2026-10-11, continued: cross-checked against a real working dual-DSI device (Quest Pro) at the DT level — one real difference found and tested, clean negative result
+
+User pushed back on the "Quest Pro must just have a simpler panel" dismissal
+from the earlier session (search above for "how the original quest-kexec
+repo author... got display working") — rightly: never actually verified,
+just inferred from the kernel patch set alone. Checked properly this time by
+pulling Quest Pro's own board DTS directly
+(`facebookincubator/oculus-linux-kernel`, branch
+`oculus-quest-pro-kernel-master`, files `kona-xrfusion.dtsi` /
+`dsi-panel-xrsmrtvwr-jdi-dual-video.dtsi`).
+
+**Quest Pro is not simpler — if anything it's a more complex topology**:
+`qcom,display-topology = <4 4 2>` (4 layer mixers, 4 DSC encoders, 2 physical
+INTFs) vs our `<2 2 2>`, same `qcom,dsi-ctrl-num = <0 1>` (both real DSI
+controllers active), same `qcom,dsi-select-clocks = "mux_byte_clk0",
+"mux_pixel_clk0"` (shared single clock source for both links, exactly our
+baseline, not independent). So Quest Pro genuinely drives two real DSI
+controllers off one shared PLL via kexec and it works — this directly
+undercuts the entire "shared clock / two controllers can't coexist" framing
+this project's own investigation had been converging on. Something other
+than the shared-dual-link architecture itself must differ.
+
+Diffed the full set of DT property *names* on both panels' nodes (ignoring
+values, since timings/resolution differ). Two meaningfully different
+properties found on Quest Pro's panel, absent on ours:
+- `qcom,cmd-sync-wait-broadcast` — checked the driver
+  (`dsi_panel.c`→`panel->sync_broadcast_en`, used in `dsi_display.c`'s
+  `dsi_display_status_reg_read()`): only gates whether the **ESD
+  periodic-health-check status read** verifies the slave controller too.
+  Not part of the actual command-broadcast path (that one,
+  `dsi_display_broadcast_cmd()`, is unconditional for any `ctrl_count > 1`
+  panel, ours included) — narrower than it first looked, not tested live.
+- `qcom,mdss-dsi-tx-eot-append` — a real DSI protocol-level setting
+  (`dsi_panel.c`→`host->append_tx_eot`→`dsi_ctrl_hw_cmn_host_setup()`→
+  `DSI_EOT_PACKET_CTRL` register, bit 0) controlling whether an EOT packet
+  is appended to DSI command transmissions. Plausible candidate for a
+  command-transfer/FIFO-adjacent issue, cheap to test (single boolean DT
+  property, no kernel rebuild).
+
+Also checked `dsi_split_link_setup()` (called right above the EOT register
+write in the same function) — this is Qualcomm's unrelated "Split Display
+Link" feature (one controller's lanes split across two PHYs). Zero DT usage
+anywhere in the entire Quest Pro *or* reference vendor tree. Not what either
+device uses; ruled out immediately, not a real lead.
+
+**Tested `qcom,mdss-dsi-tx-eot-append` live.** First attempt gave a false
+read: the pushed `boot.dtb` and the file actually staged by the kexec module
+didn't match (`sha256sum` on-device vs. local disagreed) — same
+"`adb push` not flushed before the next operation" issue as the Image-file
+corruption earlier this session, now confirmed to also hit the DTB. **New
+standing rule for this project: after any `adb push` of a payload file,
+`adb shell sync` and `sha256sum` both the local and on-device copy before
+`insmod`, every time — don't trust push success output alone.** Once
+verified matching (and the property confirmed actually present at
+`/proc/device-tree/soc/qcom,mdss_mdp@ae00000/qcom,mdss_dsi_jdi_4k_120Hz_dsc_video/qcom,mdss-dsi-tx-eot-append`
+on the live target, not just in the pushed file), ran `kms_atomic2` with the
+user watching live: **"alternating" — identical to baseline.** dmesg showed
+the same FIFO overflow storm (14k+ lines) as every other test. Clean,
+trustworthy negative result this time (unlike the first attempt).
+
+**Where this leaves it:** the two real DT-level differences found by diffing
+against a confirmed-working dual-DSI-via-kexec device are now both accounted
+for — one (`tx-eot-append`) tested directly and disproven, the other
+(`cmd-sync-wait-broadcast`) understood well enough via source to know it
+isn't in the critical path (ESD health-check only). The "maybe it's
+something trivially different in the DT" angle, motivated by a real working
+reference device rather than guesswork, is now mostly closed off too. Still
+open: a full line-by-line value diff (not just property-name diff) of the
+two panels' shared properties, and the DSI PHY timing-calibration values
+layer, both still unread. Returned device to Android cleanly at session end.
+
+## 2026-10-11 — BREAKTHROUGH: first real image on BOTH halves of the panel
+
+**User, watching live:** "I SAW IT ON BOTH SIDES" — the green test
+framebuffer visible across both halves of the panel for the first time in
+this project. Still visibly imperfect ("looked like a bunch of compression
+... on the right side there was a green strip"), i.e. DSC-style artifacts
+remain — but the alternating-flash symptom is gone and real pixels reach
+both DSI links.
+
+**Exact working state — saved, reproducible:**
+- Kernel display patch: `quest-kexec/kernel/display-patches/0001-display-first-image-both-halves-2026-10-11.patch`
+  (`git diff techpack/display` in the `qkx-target-ksrc` volume, on top of
+  kexec patch HEAD `e53ffe93b2` "qkx: nothing parked by default..."). Contains
+  the DCS/cont-splash force-enable fix, the (inactive unless DT selects it)
+  `mux_clks_sec` routing, the forced cont-splash gates, and QKXDBG printks.
+  **Does NOT contain the `is_master` timing-engine-gate removal** — that is
+  the change reverted to get here (see below).
+- Exact boot payload: `build/working-display-2026-10-11/` (Image
+  `2e6caeb6…`, initramfs `372e484c…`, boot.dtb `9e8fdb55…` = stock DTB, see
+  `SHA256SUMS`; `build/` is gitignored, so the patch above is the durable
+  record — rebuild with the normal target-Image command after applying it).
+- Test command on target: `QKX_HZ=90 QKX_CRTC=1 QKX_HOLD=30 /tmp/kms_atomic3`
+  (`drm-test/kms_atomic.c` now takes `QKX_HZ`/`QKX_CRTC`/`QKX_HOLD` env
+  knobs; defaults unchanged). Result: **0 FIFO overflows, 0 underflows,
+  0 command-transfer failures** (vs ~12,000 overflows per run before).
+
+**How it was found — golden-reference register diff against stock Android
+(the method this project had never used):** every earlier comparison was
+inside the broken kernel (intf1 vs intf2, dsi0 vs dsi1). Wrote
+`drm-test/regdump/qkx_regdump.c`, a read-only module exposing
+`/proc/qkx_regdump` (one `block+offset = value` line for CTL0-3, LM0-3,
+INTF1/2, PP0-3, DSC0-3, DSI ctrl 0/1, DSI PHY 0/1 incl. PLL; offsets from
+the captured DT). Built for both kernels (Android: `qkx-ksrc`/`qkx-out` with
+`LOCALVERSION=-g4b63ca9fd613`; target: `qkx-target-ksrc`/`qkx-target-out`).
+**Only read while the panel is actively scanning** (unclocked block reads
+can reset the SoC). Three dumps, all in `drm-test/regdump/dumps/`:
+1. `android_bootloader_state_90hz.txt` — stock Android as booted (display
+   state is the bootloader's, adopted via cont-splash).
+2. `android_kernel_reinit_90hz.txt` — stock Android after `input keyevent 26`
+   twice (display fully off then on), so **Android's own kernel** reprograms
+   everything through the same driver code we run. This control is the key:
+   any difference between (1) and (2) is just bootloader-vs-kernel
+   programming and is proven harmless, since the panel works after (2).
+3. `kexec_ismaster_gate_removed_fifo_storm.txt` — our kernel mid-commit.
+
+(2) vs (3) showed the smoking gun: **on stock Android only INTF1's
+`INTF_TIMING_ENGINE_EN` is set; INTF2's stays 0** — the split panel is
+driven by the master INTF's timing engine alone. Our build still carried
+the earlier experiment that removed the `is_master` gate in
+`sde_encoder_phys_vid_handle_post_kickoff()` so both engines run. That was
+the direct cause of the FIFO overflow storm, and the overflow-recovery
+handler then soft-reset the DSI controllers over and over (hence our dump's
+`DSI_CTRL` video-mode bit off, `DSI_CLK_CTRL=0`, `DSI_CLK_STATUS=0x1`, all
+lanes idle in stop state `DSI_LANE_STATUS=0x1f1f` vs Android's HS
+`0x1f00`). Reverting just `sde_encoder_phys_vid.c` to stock → storm gone,
+DSI ctrl/PHY state matches Android's kernel-reinit state (only the
+content-dependent MISR differs) → image on both halves.
+
+**Corrections to earlier entries in this file (they were wrong):**
+- The `is_master` gate is **correct stock behaviour**, not a bug. "intf2
+  vsync:0" / "intf2 never engages" was normal: on this hardware the slave
+  INTF is never independently enabled, the master's engine drives both.
+  The 2026-10-10 entries treating the gate as the problem (and keeping the
+  removal "as a real improvement") led the investigation astray from that
+  point on.
+- Earlier tonight's "pushed file got zeroed/corrupted" explanation is wrong.
+  What actually happens: the kexec jump (and the unclean reset back to
+  Android) **drops page-cache writes that were not yet flushed**, so the
+  file reverts to its *previous* contents (that's why the "bad" DTB had
+  exactly the stock DTB's checksum). Rule stands, cause corrected: after any
+  `adb push`, run `adb shell sync` and compare `sha256sum` on both sides
+  before `insmod ... execute=1`.
+
+**Proven benign by the control (Android's own kernel programs them the
+same way and the panel works) — don't chase these:** `DSI_LANE_SWAP_CTRL=1`,
+`DSI_EOT_PACKET_CTRL=0` (consistent with the negative `tx-eot-append` test),
+DSI PLL SSC registers, PLL fractional divider, `DSI_CLKOUT_TIMING_CTRL`.
+Also equivalent: PHY `CMN_CLK_CFG0/1` pixel-clock path (Android mux=1 then
+÷3, ours mux=0 then ÷6 — same output).
+
+**Other facts established this session:**
+- Stock Android runs the panel at **90 Hz** on **`sde-crtc-1`**
+  (`/sys/devices/platform/soc/ae00000.qcom,mdss_mdp/drm/card0/sde-crtc-1/measured_fps`),
+  backlight 255. All 61 modes (60-120 Hz) share one 382164 kHz clock (DFPS
+  via vertical front porch).
+- Stock Android logs **zero** DSI FIFO overflow/underflow; it does log the
+  occasional `dsi-ctrl-0: Command transfer failed`, so that line is normal
+  noise, not a symptom.
+- JDI panel backlight = two BLUs (left/right) strobed at programmable
+  scanlines via DCS `0xB9` in `dsi_panel_jdi_update_backlight()`.
+
+**Remaining known differences vs Android (next leads for the
+"compression"/green-strip artifacts):** `PP0/PP1+0x0a8` (Android 3, ours 0;
+unnamed in `sde_hw_pingpong.c`, sits between `PP_DSC_MODE` 0x0a0 and
+`PP_DCE_DATA_IN_SWAP` 0x0ac), `INTF1/2+0x08c` (Android 0x11, ours 0),
+`INTF1/2+0x1c4` (Android 0x200, ours 0x600), `DSC0/1+0x128..0x130`, and
+TOP `+0x008/+0x010/+0x014` (likely interrupt masks for Android's second,
+virtual-display CRTC). Diff command:
+`join -j1 <(sed 's/ = / /' A|sort) <(sed 's/ = / /' B|sort) | awk '$2!=$3'`.

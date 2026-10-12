@@ -1,5 +1,6 @@
 #!/bin/bash
 # on-device: fresh Xvfb + openbox + per-eye terminals (single source of truth)
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export DISPLAY=:99
 export XDG_RUNTIME_DIR=/tmp/xdg
 mkdir -p $XDG_RUNTIME_DIR

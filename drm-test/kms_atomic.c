@@ -188,6 +188,8 @@ int main(int argc, char **argv)
 	void *buf = mmap(NULL, create.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, map.offset);
 	CHECK(buf != MAP_FAILED, "mmap");
 	uint32_t color = 0xFF20FF40; /* bright green this time, to tell apart from the earlier red/white flash */
+	if (getenv("QKX_COLOR"))
+		color = (uint32_t)strtoul(getenv("QKX_COLOR"), NULL, 16); /* QKX_COLOR=FFFF0000 etc. */
 	if (getenv("QKX_PATTERN")) {
 		/* Quadrants TL red, TR green, BL blue, BR white, black grid every 120px:
 		 * shows link/half geometry, and DSC damage lines up with 480px slices. */

@@ -1,0 +1,381 @@
+diff --git a/techpack/display/msm/dsi/dsi_clk_manager.c b/techpack/display/msm/dsi/dsi_clk_manager.c
+index ec2df9660..9bc4c3317 100644
+--- a/techpack/display/msm/dsi/dsi_clk_manager.c
++++ b/techpack/display/msm/dsi/dsi_clk_manager.c
+@@ -342,6 +342,11 @@ static int dsi_link_hs_clk_set_rate(struct dsi_link_hs_clk_info *link_hs_clks,
+ 	l_clks = container_of(link_hs_clks, struct dsi_link_clks, hs_clks);
+ 	mngr = container_of(l_clks, struct dsi_clk_mngr, link_clks[index]);
+ 
++	DSI_ERR("QKXDBG: set_rate idx=%d cont_splash=%d byte_clk=%p pixel_clk=%p byte_rate=%u pix_rate=%u\n",
++		index, mngr->is_cont_splash_enabled,
++		link_hs_clks->byte_clk, link_hs_clks->pixel_clk,
++		l_clks->freq.byte_clk_rate, l_clks->freq.pix_clk_rate);
++
+ 	/*
+ 	 * In an ideal world, cont_splash_enabled should not be required inside
+ 	 * the clock manager. But, in the current driver cont_splash_enabled
+diff --git a/techpack/display/msm/dsi/dsi_display.c b/techpack/display/msm/dsi/dsi_display.c
+index 68a95ac1e..75df71d68 100644
+--- a/techpack/display/msm/dsi/dsi_display.c
++++ b/techpack/display/msm/dsi/dsi_display.c
+@@ -2350,12 +2350,24 @@ static int dsi_display_set_clk_src(struct dsi_display *display)
+ 
+ 	/* Turn on rest of the controllers */
+ 	display_for_each_ctrl(i, display) {
++		struct dsi_clk_link_set *slave_src = &display->clock_info.mux_clks;
++
+ 		ctrl = &display->ctrl[i];
+ 		if (!ctrl->ctrl || (ctrl == m_ctrl))
+ 			continue;
+ 
+-		rc = dsi_ctrl_set_clock_source(ctrl->ctrl,
+-					&display->clock_info.mux_clks);
++		/* QKX: give the slave controller its own independent PLL-derived
++		 * clock source instead of reusing the master's, if available.
++		 */
++		if (display->clock_info.mux_clks_sec.byte_clk &&
++				display->clock_info.mux_clks_sec.pixel_clk) {
++			slave_src = &display->clock_info.mux_clks_sec;
++			DSI_ERR("QKXDBG: using independent mux_clks_sec for ctrl idx=%d\n", i);
++		} else {
++			DSI_ERR("QKXDBG: mux_clks_sec not available for ctrl idx=%d, using shared master clocks\n", i);
++		}
++
++		rc = dsi_ctrl_set_clock_source(ctrl->ctrl, slave_src);
+ 		if (rc) {
+ 			DSI_ERR("[%s] failed to set source clocks, rc=%d\n",
+ 				   display->name, rc);
+@@ -2507,13 +2519,12 @@ static int dsi_display_ctrl_host_enable(struct dsi_display *display)
+ 	int i;
+ 	struct dsi_display_ctrl *m_ctrl, *ctrl;
+ 
+-	/* Host engine states are already taken care for
+-	 * continuous splash case
++	/* QKXDBG: host engine states are normally already taken care of for
++	 * continuous splash case, but that assumption doesn't hold across a
++	 * kexec warm transition; always force this through.
+ 	 */
+-	if (display->is_cont_splash_enabled) {
+-		DSI_DEBUG("cont splash enabled, host enable not required\n");
+-		return 0;
+-	}
++	DSI_ERR("QKXDBG: dsi_display_ctrl_host_enable is_cont_splash_enabled=%d forcing real enable\n",
++		display->is_cont_splash_enabled);
+ 
+ 	m_ctrl = &display->ctrl[display->cmd_master_idx];
+ 
+@@ -2809,13 +2820,12 @@ static int dsi_display_phy_sw_reset(struct dsi_display *display)
+ 	int i;
+ 	struct dsi_display_ctrl *m_ctrl, *ctrl;
+ 
+-	/* For continuous splash use case ctrl states are updated
+-	 * separately and hence we do an early return
++	/* QKXDBG: this early return assumes ctrl state was already set up by
++	 * cont-splash, which doesn't hold across a kexec warm transition;
++	 * always force the real reset through.
+ 	 */
+-	if (display->is_cont_splash_enabled) {
+-		DSI_DEBUG("cont splash enabled, phy sw reset not required\n");
+-		return 0;
+-	}
++	DSI_ERR("QKXDBG: dsi_display_phy_sw_reset is_cont_splash_enabled=%d forcing real reset\n",
++		display->is_cont_splash_enabled);
+ 
+ 	m_ctrl = &display->ctrl[display->cmd_master_idx];
+ 
+@@ -3064,6 +3074,7 @@ static int dsi_display_clocks_init(struct dsi_display *display)
+ 	struct clk *dsi_clk;
+ 	struct dsi_clk_link_set *src = &display->clock_info.src_clks;
+ 	struct dsi_clk_link_set *mux = &display->clock_info.mux_clks;
++	struct dsi_clk_link_set *mux_sec = &display->clock_info.mux_clks_sec;
+ 	struct dsi_clk_link_set *cphy = &display->clock_info.cphy_clks;
+ 	struct dsi_clk_link_set *shadow = &display->clock_info.shadow_clks;
+ 	struct dsi_clk_link_set *shadow_cphy =
+@@ -3157,6 +3168,16 @@ static int dsi_display_clocks_init(struct dsi_display *display)
+ 			continue;
+ 		}
+ 
++		if (!strcmp(clk_name, "mux_byte_clk1")) {
++			mux_sec->byte_clk = dsi_clk;
++			continue;
++		}
++
++		if (!strcmp(clk_name, "mux_pixel_clk1")) {
++			mux_sec->pixel_clk = dsi_clk;
++			continue;
++		}
++
+ 		if (dsi_display_check_prefix(mux_byte, clk_name)) {
+ 			mux->byte_clk = dsi_clk;
+ 			continue;
+@@ -3423,9 +3444,14 @@ int dsi_post_clkon_cb(void *priv,
+ 		 * when cont-splash screen transition is going on.
+ 		 * Toggling resync FIFO during cont splash transition
+ 		 * can lead to blinks on the display.
++		 *
++		 * QKXDBG: the "already in sync from cont-splash" assumption
++		 * doesn't hold across a kexec warm transition with our own
++		 * independent clock routing; always force the toggle.
+ 		 */
+-		if (!display->is_cont_splash_enabled)
+-			dsi_display_toggle_resync_fifo(display);
++		DSI_ERR("QKXDBG: post_clkon_cb resync_fifo is_cont_splash_enabled=%d forcing toggle\n",
++			display->is_cont_splash_enabled);
++		dsi_display_toggle_resync_fifo(display);
+ 
+ 		if (display->ulps_enabled) {
+ 			rc = dsi_display_set_ulps(display, false);
+@@ -6915,6 +6941,18 @@ static void dsi_display_handle_fifo_overflow(struct work_struct *work)
+ 	}
+ 
+ 	DSI_DEBUG("handle DSI FIFO overflow error\n");
++
++	/* QKXDBG: snapshot lane status on both phys at the instant of error */
++	display_for_each_ctrl(i, display) {
++		struct dsi_display_ctrl *snap_ctrl = &display->ctrl[i];
++		u32 lane_status = 0xdeadbeef;
++
++		if (snap_ctrl->phy && snap_ctrl->phy->hw.base)
++			lane_status = readl_relaxed(snap_ctrl->phy->hw.base + 0x14C);
++		DSI_ERR("QKXDBG: fifo_overflow snapshot ctrl_idx=%d lane_status1=0x%08x\n",
++			i, lane_status);
++	}
++
+ 	dsi_display_clk_ctrl(display->dsi_clk_handle,
+ 			DSI_ALL_CLKS, DSI_CLK_ON);
+ 
+@@ -7568,10 +7606,16 @@ int dsi_display_enable(struct dsi_display *display)
+ 	}
+ 	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY);
+ 
+-	/* Engine states and panel states are populated during splash
+-	 * resource init and hence we return early
++	/* QKXDBG: force a real panel enable even if cont-splash is flagged.
++	 * Under kexec, a fresh kernel instance re-probes the same DSI/PHY
++	 * hardware (confirmed via dsi_phy_driver_probe/dsi_ctrl_dev_probe
++	 * running every boot), so the "bootloader already sent valid DCS
++	 * commands" assumption behind is_cont_splash_enabled does not hold.
++	 * Clean up splash resources if flagged, but do NOT skip the real
++	 * dsi_panel_enable() call below.
+ 	 */
+ 	if (display->is_cont_splash_enabled) {
++		DSI_ERR("QKXDBG: cont_splash_enabled was true, forcing real panel enable anyway\n");
+ 
+ 		dsi_display_config_ctrl_for_cont_splash(display);
+ 
+@@ -7581,10 +7625,6 @@ int dsi_display_enable(struct dsi_display *display)
+ 				rc);
+ 			return -EINVAL;
+ 		}
+-
+-		display->panel->panel_initialized = true;
+-		DSI_DEBUG("cont splash enabled, display enable not required\n");
+-		return 0;
+ 	}
+ 
+ 	mutex_lock(&display->display_lock);
+diff --git a/techpack/display/msm/dsi/dsi_display.h b/techpack/display/msm/dsi/dsi_display.h
+index 224f70598..cff2d4dfd 100644
+--- a/techpack/display/msm/dsi/dsi_display.h
++++ b/techpack/display/msm/dsi/dsi_display.h
+@@ -112,6 +112,7 @@ struct dsi_display_boot_param {
+ struct dsi_display_clk_info {
+ 	struct dsi_clk_link_set src_clks;
+ 	struct dsi_clk_link_set mux_clks;
++	struct dsi_clk_link_set mux_clks_sec; /* QKX: independent clk source for ctrl1 */
+ 	struct dsi_clk_link_set cphy_clks;
+ 	struct dsi_clk_link_set shadow_clks;
+ 	struct dsi_clk_link_set shadow_cphy_clks;
+diff --git a/techpack/display/msm/dsi/dsi_panel.c b/techpack/display/msm/dsi/dsi_panel.c
+index 2b6a168f9..741478212 100644
+--- a/techpack/display/msm/dsi/dsi_panel.c
++++ b/techpack/display/msm/dsi/dsi_panel.c
+@@ -489,7 +489,10 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
+ {
+ 	int rc = 0;
+ 
++	DSI_ERR("QKXDBG: dsi_panel_power_on called, panel=%s\n", panel->name);
++
+ 	rc = dsi_pwr_enable_regulator(&panel->power_info, true);
++	DSI_ERR("QKXDBG: dsi_pwr_enable_regulator(true) rc=%d\n", rc);
+ 	if (rc) {
+ 		DSI_ERR("[%s] failed to enable vregs, rc=%d\n",
+ 				panel->name, rc);
+@@ -503,6 +506,7 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
+ 	}
+ 
+ 	rc = dsi_panel_reset(panel);
++	DSI_ERR("QKXDBG: dsi_panel_reset rc=%d\n", rc);
+ 	if (rc) {
+ 		DSI_ERR("[%s] failed to reset panel, rc=%d\n", panel->name, rc);
+ 		goto error_disable_gpio;
+@@ -5242,7 +5246,12 @@ int dsi_panel_enable(struct dsi_panel *panel)
+ 
+ 	mutex_lock(&panel->panel_lock);
+ 
++	DSI_ERR("QKXDBG: dsi_panel_enable called, panel=%s\n", panel->name);
++
+ 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
++
++	DSI_ERR("QKXDBG: dsi_panel_tx_cmd_set(DSI_CMD_SET_ON) returned rc=%d\n", rc);
++
+ 	if (rc)
+ 		DSI_ERR("[%s] failed to send DSI_CMD_SET_ON cmds, rc=%d\n",
+ 		       panel->name, rc);
+diff --git a/techpack/display/msm/dsi/dsi_phy.c b/techpack/display/msm/dsi/dsi_phy.c
+index 7c05b4bcd..4e047fa9f 100644
+--- a/techpack/display/msm/dsi/dsi_phy.c
++++ b/techpack/display/msm/dsi/dsi_phy.c
+@@ -918,8 +918,11 @@ int dsi_phy_enable(struct msm_dsi_phy *phy,
+ 		goto error;
+ 	}
+ 
++	DSI_PHY_ERR(phy, "QKXDBG: dsi_phy_enable idx=%d is_cont_splash_enabled=%d\n",
++		phy->index, is_cont_splash_enabled);
+ 	if (!is_cont_splash_enabled) {
+ 		dsi_phy_enable_hw(phy);
++		DSI_PHY_ERR(phy, "QKXDBG: dsi_phy_enable_hw called for idx=%d\n", phy->index);
+ 		DSI_PHY_DBG(phy, "cont splash not enabled, phy enable required\n");
+ 	}
+ 	phy->dsi_phy_state = DSI_PHY_ENGINE_ON;
+diff --git a/techpack/display/msm/sde/sde_rm.c b/techpack/display/msm/sde/sde_rm.c
+index 1c9342a44..13d10e84f 100644
+--- a/techpack/display/msm/sde/sde_rm.c
++++ b/techpack/display/msm/sde/sde_rm.c
+@@ -1911,6 +1911,7 @@ static int _sde_rm_populate_requirements(
+ 	SDE_EVT32(mode->hdisplay, rm->lm_max_width, reqs->topology->num_lm,
+ 			reqs->top_ctrl, reqs->topology->top_name,
+ 			reqs->topology->num_ctl);
++	SDE_ERROR("QKXDBG: top=%d num_lm=%d num_comp_enc=%d num_intf=%d mode=%dx%d\n", reqs->topology->top_name, reqs->topology->num_lm, reqs->topology->num_comp_enc, reqs->topology->num_intf, mode->hdisplay, mode->vdisplay);
+ 
+ 	return 0;
+ }
+diff --git a/techpack/display/pll/dsi_pll_7nm.c b/techpack/display/pll/dsi_pll_7nm.c
+index 77d346bda..04238acd5 100644
+--- a/techpack/display/pll/dsi_pll_7nm.c
++++ b/techpack/display/pll/dsi_pll_7nm.c
+@@ -420,6 +420,15 @@ static inline int phy_reg_update_bits(void *context, unsigned int reg,
+ 	return rc;
+ }
+ 
++/* QKXDBG: trace every writer of the pclk divider (CFG0) and mux (CFG1). */
++#define QKXPLL_SW(tag, p) pr_err("QKXPLL %s idx=%d handoff=%d cached cfg0=0x%x cfg1=0x%x vco_cached=%llu\n", \
++	tag, (p)->index, (p)->handoff_resources, (p)->cached_cfg0, (p)->cached_cfg1, \
++	(unsigned long long)(p)->vco_cached_rate)
++#define QKXPLL_HW(tag, p) pr_err("QKXPLL %s idx=%d handoff=%d hw cfg0=0x%x cfg1=0x%x cached cfg0=0x%x cfg1=0x%x vco_cached=%llu\n", \
++	tag, (p)->index, (p)->handoff_resources, MDSS_PLL_REG_R((p)->phy_base, PHY_CMN_CLK_CFG0), \
++	MDSS_PLL_REG_R((p)->phy_base, PHY_CMN_CLK_CFG1), (p)->cached_cfg0, (p)->cached_cfg1, \
++	(unsigned long long)(p)->vco_cached_rate)
++
+ static inline int pclk_mux_read_sel(void *context, unsigned int reg,
+ 					unsigned int *val)
+ {
+@@ -427,10 +436,23 @@ static inline int pclk_mux_read_sel(void *context, unsigned int reg,
+ 	struct mdss_pll_resources *rsc = context;
+ 
+ 	rc = mdss_pll_resource_enable(rsc, true);
+-	if (rc)
++	if (rc) {
+ 		pr_err("Failed to enable dsi pll resources, rc=%d\n", rc);
+-	else
++	} else {
+ 		*val = (MDSS_PLL_REG_R(rsc->phy_base, reg) & 0x3);
++		/*
++		 * qkx: keep the driver's cached dsiclk_sel in step with what the
++		 * clock framework just read as the mux parent. dsi_pll_enable()
++		 * writes cached_cfg1 into the mux; if it was never set (no
++		 * parent change since boot, e.g. after kexec from a running
++		 * display) it forced bitclk while the framework had programmed
++		 * the pclk divider for bitclk/2: pixel clock x2, FIFO overflow.
++		 */
++		rsc->cached_cfg1 = *val;
++		if (rsc->slave)
++			rsc->slave->cached_cfg1 = *val;
++		pr_err("QKXPLL mux_read_sel idx=%d val=%u\n", rsc->index, *val);
++	}
+ 
+ 	(void)mdss_pll_resource_enable(rsc, false);
+ 	return rc;
+@@ -469,6 +491,8 @@ static inline int pclk_mux_write_sel(void *context, unsigned int reg,
+ 	rc = pclk_mux_write_sel_sub(rsc, reg, val);
+ 	if (!rc && rsc->slave)
+ 		rc = pclk_mux_write_sel_sub(rsc->slave, reg, val);
++	pr_err("QKXPLL mux_write_sel val=%u\n", val);
++	QKXPLL_HW("mux_write_sel", rsc);
+ 
+ 	(void)mdss_pll_resource_enable(rsc, false);
+ 
+@@ -1398,11 +1422,13 @@ static int dsi_pll_enable(struct dsi_pll_vco_clk *vco)
+ 			rsc->slave->cached_cfg1 |= 0x3;
+ 	}
+ 
++	QKXPLL_HW("enable-pre", rsc);
+ 	phy_reg_update_bits_sub(rsc, PHY_CMN_CLK_CFG1, 0x03, rsc->cached_cfg1);
+ 	if (rsc->slave)
+ 		phy_reg_update_bits_sub(rsc->slave, PHY_CMN_CLK_CFG1,
+ 				0x03, rsc->slave->cached_cfg1);
+ 	wmb(); /* ensure dsiclk_sel is always programmed before pll start */
++	QKXPLL_HW("enable-post", rsc);
+ 
+ 	/* Start PLL */
+ 	MDSS_PLL_REG_W(rsc->phy_base, PHY_CMN_PLL_CNTRL, 0x01);
+@@ -1515,9 +1541,23 @@ static void vco_7nm_unprepare(struct clk_hw *hw)
+ 	 * sure that we save and restore the divider settings when dynamic FPS
+ 	 * is triggered.
+ 	 */
++	QKXPLL_HW("unprepare", pll);
+ 	if (!pll->handoff_resources || pll->dfps_trigger) {
+ 		pll->cached_cfg0 = MDSS_PLL_REG_R(pll->phy_base,
+ 						  PHY_CMN_CLK_CFG0);
++		/*
++		 * qkx: cache the pclk mux (dsiclk_sel) together with the pclk
++		 * divider. prepare restores cfg0 from this cache, but cfg1 was
++		 * only cached on a cont-splash handoff, so after kexec the
++		 * bootloader's /3 divider got paired with a zero mux select
++		 * (bitclk instead of bitclk/2): pixel clock x2, DSI FIFO overflow.
++		 */
++		pll->cached_cfg1 = MDSS_PLL_REG_R(pll->phy_base,
++						  PHY_CMN_CLK_CFG1);
++		if (pll->slave)
++			pll->slave->cached_cfg1 =
++				MDSS_PLL_REG_R(pll->slave->phy_base,
++					       PHY_CMN_CLK_CFG1);
+ 		pll->cached_outdiv = MDSS_PLL_REG_R(pll->pll_base,
+ 						    PLL_PLL_OUTDIV_RATE);
+ 		pr_debug("cfg0=%d,cfg1=%d, outdiv=%d\n", pll->cached_cfg0,
+@@ -1557,6 +1597,7 @@ static int vco_7nm_prepare(struct clk_hw *hw)
+ 		return -EINVAL;
+ 	}
+ 
++	QKXPLL_SW("prepare-entry", pll);
+ 	/* Skip vco recalculation for continuous splash use case */
+ 	if (pll->handoff_resources)
+ 		return 0;
+@@ -1568,6 +1609,10 @@ static int vco_7nm_prepare(struct clk_hw *hw)
+ 		return rc;
+ 	}
+ 
++	QKXPLL_HW("prepare-hw", pll);
++	pr_err("QKXPLL prepare restore=%d clk_rate=%lu\n",
++	       (pll->vco_cached_rate != 0) && (pll->vco_cached_rate == clk_hw_get_rate(hw)),
++	       clk_hw_get_rate(hw));
+ 	if ((pll->vco_cached_rate != 0) &&
+ 	    (pll->vco_cached_rate == clk_hw_get_rate(hw))) {
+ 		rc = hw->init->ops->set_rate(hw, pll->vco_cached_rate,
+@@ -1640,6 +1685,7 @@ static unsigned long vco_7nm_recalc_rate(struct clk_hw *hw,
+ 		pr_debug("PLL not enabled\n");
+ 		pll->handoff_resources = false;
+ 	}
++	QKXPLL_HW("recalc-handoff", pll);
+ 
+ 	(void)mdss_pll_resource_enable(pll, false);
+ 	return rc;
+@@ -1697,6 +1743,8 @@ static int pixel_clk_set_div(void *context, unsigned int reg, unsigned int div)
+ 	pixel_clk_set_div_sub(pll, div);
+ 	if (pll->slave)
+ 		pixel_clk_set_div_sub(pll->slave, div);
++	pr_err("QKXPLL pixel_set_div div=%u\n", div);
++	QKXPLL_HW("pixel_set_div", pll);
+ 	(void)mdss_pll_resource_enable(pll, false);
+ 
+ 	return 0;

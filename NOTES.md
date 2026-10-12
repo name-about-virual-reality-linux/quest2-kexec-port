@@ -2274,3 +2274,35 @@ an earlier "disabled" reading was taken after the hold ended),
 `display_panel_avdd` (GPIO fixed regulator, no consumer; holding it on via
 `drm-test/regdump/qkx_regon.c` did not stop the storm), framebuffer content
 (solid vs pattern), and commit timing after boot.
+
+## 2026-10-11 (late): pclk mux fix CONFIRMED on a cold boot; remaining symptom is garbage picture with one correct strip
+
+**Fixed and verified:** `dsi_pll_7nm.c` `pclk_mux_read_sel()` now syncs
+`cached_cfg1` (and the slave's) with the hardware mux value the clock framework
+just read. Before, `dsi_pll_enable()` wrote the never-initialised `cached_cfg1`
+(0) into `PHY_CMN_CLK_CFG1`, switching pclk to undivided bitclk while the
+bootloader's /3 divider stayed in `CFG0` -> pixel clock x2 -> FIFO overflow
+storm. (The earlier `vco_7nm_unprepare` caching in patch 0002 was NOT the real
+fix; the cold-boot trace showed no PLL prepare/unprepare before the first
+commit.) Verified on a cold `adb reboot` + kexec, first commit after boot:
+enable-pre `cfg1=0x0 cached=0x1` -> enable-post `cfg1=0x1`; **0 FIFO
+overflow/underflow, 0 command failures**. Saved as
+`quest-kexec/kernel/display-patches/0003-...patch` (full `techpack/display`
+diff incl. QKXDBG/QKXPLL prints); payload in `build/working-clockfix-2026-10-11/`;
+dump `drm-test/regdump/dumps/kexec_clockfix_cold_boot_90hz.txt`.
+Also: a hung `kms_atomic3` (RCU stall on CPU2) happened once and needed a
+return-to-Android; cold reboot before kexec remains the reliable procedure.
+
+**Remaining symptom (user, watching):** static/blocks everywhere plus a thin
+strip at the far right of **constant width** that shows the correct fill colour
+(green fill -> green strip, red fill -> red strip). Rest is garbage not following
+the fill. `kms_atomic.c` gained `QKX_COLOR=<hex ARGB>` (built as
+`drm-test/kms_atomic4`).
+
+**Compared against Android's own kernel re-init dump:** all DSC0/1 encoder
+registers identical (slice 480, 4 slices/line); DSI ctrl registers identical
+except MISR; INTF/PP diffs are `INTF+0x1c4` (= `INTF_INTR_STATUS`, status),
+`INTF+0x08c`, `PP+0x0a8` (never written by the driver), PHY PLL readback
+0x6b8-0x798 (likely calibration status). Panel power/reset/DCS ON sequence runs
+with rc=0. So the SoC-side config matches; suspect the panel-side DSC decode
+(PPS/init timing) or something not visible in these registers.

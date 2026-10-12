@@ -201,14 +201,14 @@ int main(int argc, char **argv) {
                         int b = 0; char dir[8] = "";
                         if (sscanf(line + 7, "%d %7s", &b, dir) >= 1) {
                             int isdown = dir[0] != 'u';
-                            uint8_t r[36];
+                            uint8_t r[32];
                             memset(r, 0, sizeof(r));
                             r[0] = xtest_major;
                             r[1] = 5;
-                            put16(r + 2, 9);
+                            put16(r + 2, 8);
                             r[4] = isdown ? 4 : 5; /* ButtonPress/Release */
                             r[5] = (uint8_t)b;
-                            wfull(r, 36);
+                            wfull(r, 32);
                         }
                         continue;
                     }
@@ -219,14 +219,14 @@ int main(int argc, char **argv) {
                             int kc = keycode_for(ks);
                             if (kc < 0) { fprintf(stderr, "no keycode for U+%04X\n", ks); continue; }
                             int isdown = dir[0] != 'u';
-                            uint8_t r[36];
+                            uint8_t r[32];
                             memset(r, 0, sizeof(r));
                             r[0] = xtest_major;
                             r[1] = 5;
-                            put16(r + 2, 9);
+                            put16(r + 2, 8);
                             r[4] = isdown ? 2 : 3; /* KeyPress/Release */
                             r[5] = (uint8_t)kc;
-                            wfull(r, 36);
+                            wfull(r, 32);
                         }
                         continue;
                     }
@@ -236,22 +236,22 @@ int main(int argc, char **argv) {
                             if (!e) { fprintf(stderr, "no key for '%c'\n", *c); continue; }
                             int kc = e->keycode;
                             int shk = e->shift ? 50 : -1; /* Shift_L */
-                            uint8_t r[36];
+                            uint8_t r[32];
                             if (shk > 0) {
                                 memset(r, 0, sizeof(r));
-                                r[0] = xtest_major; r[1] = 5; put16(r + 2, 9);
-                                r[4] = 2; r[5] = (uint8_t)shk; wfull(r, 36);
+                                r[0] = xtest_major; r[1] = 5; put16(r + 2, 8);
+                                r[4] = 2; r[5] = (uint8_t)shk; wfull(r, 32);
                             }
                             memset(r, 0, sizeof(r));
-                            r[0] = xtest_major; r[1] = 5; put16(r + 2, 9);
-                            r[4] = 2; r[5] = (uint8_t)kc; wfull(r, 36);
+                            r[0] = xtest_major; r[1] = 5; put16(r + 2, 8);
+                            r[4] = 2; r[5] = (uint8_t)kc; wfull(r, 32);
                             memset(r, 0, sizeof(r));
-                            r[0] = xtest_major; r[1] = 5; put16(r + 2, 9);
-                            r[4] = 3; r[5] = (uint8_t)kc; wfull(r, 36);
+                            r[0] = xtest_major; r[1] = 5; put16(r + 2, 8);
+                            r[4] = 3; r[5] = (uint8_t)kc; wfull(r, 32);
                             if (shk > 0) {
                                 memset(r, 0, sizeof(r));
-                                r[0] = xtest_major; r[1] = 5; put16(r + 2, 9);
-                                r[4] = 3; r[5] = (uint8_t)shk; wfull(r, 36);
+                                r[0] = xtest_major; r[1] = 5; put16(r + 2, 8);
+                                r[4] = 3; r[5] = (uint8_t)shk; wfull(r, 32);
                             }
                             struct timespec ts = { .tv_nsec = 8000000L };
                             nanosleep(&ts, NULL);

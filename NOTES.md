@@ -2306,3 +2306,15 @@ except MISR; INTF/PP diffs are `INTF+0x1c4` (= `INTF_INTR_STATUS`, status),
 0x6b8-0x798 (likely calibration status). Panel power/reset/DCS ON sequence runs
 with rc=0. So the SoC-side config matches; suspect the panel-side DSC decode
 (PPS/init timing) or something not visible in these registers.
+
+**Refresh-rate experiment (solid red, `QKX_COLOR=FFFF0000`, user watching, all 0 FIFO errors):**
+the correct-colour strip at the far right gets **wider at 60 Hz, narrower at 120 Hz**
+(90 Hz in between, constant width run to run); the garbage blocks are unchanged.
+All modes share one 382164 kHz pixel clock and differ only in vertical front porch,
+so the good area grows with vertical blanking time. Suggests the panel's decode
+degrades during the active scan and recovers in blanking (or similar frame-timing
+dependence), not a static config error. Ruled out as causes this round: panel PPS
+(DCS 0xE6 in DSI_CMD_SET_ON) matches the SoC DSC encoder exactly; DSC0/1 and DSI ctrl
+registers match Android's kernel re-init; PHY0 PLL registers 0x6b8-0x798 differ even
+between Android's bootloader state and Android's re-init (calibration status); TOP
+0x008/0x010/0x014/0x304 are interrupt status; CTL1 diffs are Android's virtual display.

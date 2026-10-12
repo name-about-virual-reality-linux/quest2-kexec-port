@@ -2318,3 +2318,30 @@ dependence), not a static config error. Ruled out as causes this round: panel PP
 registers match Android's kernel re-init; PHY0 PLL registers 0x6b8-0x798 differ even
 between Android's bootloader state and Android's re-init (calibration status); TOP
 0x008/0x010/0x014/0x304 are interrupt status; CTL1 diffs are Android's virtual display.
+
+## 2026-10-11: BREAKTHROUGH — Dual-Plane Hardware Mixer Discovery & Clean Display (Zero Glitches/Static)
+
+### The Root Cause:
+The Quest 2 display topology uses dual hardware layer mixers (LM0 and LM1) driving dual DSI interfaces (INTF1 and INTF2) through dual DSC encoders (480-pixel slices, 4 slices per line total = 1920 total horizontal resolution).
+
+When committing a single wide plane (`src_w=1920, dst_w=1920`) via standard DRM atomic modeset:
+* The kernel driver attempted to bind a single plane across both layer mixers, but the DSC timing and slice packing degraded during scanout across the boundary, causing the entire left eye and most of the screen to break into static/compression failure, leaving only a thin sliver on the far right where the second pipe recovered during blanking.
+* **Stock Android's Secret:** Investigating Android's active plane allocations revealed Android's HWComposer does NOT use a single plane. Instead, it assigns **two distinct hardware DMA planes**:
+  * **Plane 101:** Source `[0, 0, 960, 3664]`, Destination `[0, 0, 960, 3664]` (feeding LM0 / left eye)
+  * **Plane 98:** Source `[960, 0, 960, 3664]`, Destination `[960, 0, 960, 3664]` (feeding LM1 / right eye)
+  * Both planes reference the same framebuffer and are committed simultaneously in a single atomic request to CRTC 129.
+
+### The Fix (`drm-test/kms_atomic_dual.c`):
+We implemented `kms_atomic_dual`:
+1. Binds **Plane 101** to `CRTC 129` with source rect `[0, 0, 960, 3664]` and dest rect `[0, 0, 960, 3664]`.
+2. Binds **Plane 98** to `CRTC 129` with source rect `[960, 0, 960, 3664]` and dest rect `[960, 0, 960, 3664]`.
+3. Commits all 32 atomic properties across CRTC 129, Connector 29, Plane 101, and Plane 98 in one atomic transaction (`DRM_MODE_ATOMIC_ALLOW_MODESET`).
+
+### Result:
+* Tested in both stock Android (SurfaceFlinger suspended) and pure **kexec Linux**.
+* **Confirmed through lenses:** ZERO static, ZERO artifacts, ZERO green strips, and 100% clean solid colors across both eyes!
+
+### Backup Locations:
+* Directory: `build/working-dualplane-clean-2026-10-11/`
+* Tarball: `/Users/waffles/quest2-kexec-backups/working-dualplane-clean-20261011-230409.tar.gz`
+* Git Commit: `f08eefeb8d8127027740710d06ef4277bb1031db`

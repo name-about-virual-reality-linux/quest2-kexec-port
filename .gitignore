@@ -9,6 +9,7 @@
 !/README.md
 !/drm-test/
 !/scratch_patch/
+!/tools/
 !/.gitignore
 
 # Within quest-kexec/: a vendored busybox source+build tree (not ours),

@@ -190,7 +190,38 @@ int main(int argc, char **argv)
 	uint32_t color = 0xFF20FF40; /* bright green this time, to tell apart from the earlier red/white flash */
 	if (getenv("QKX_COLOR"))
 		color = (uint32_t)strtoul(getenv("QKX_COLOR"), NULL, 16); /* QKX_COLOR=FFFF0000 etc. */
-	if (getenv("QKX_PATTERN")) {
+	if (getenv("QKX_PATTERN") && atoi(getenv("QKX_PATTERN")) == 3) {
+		/* 100-line bands cycling red,green,blue,yellow,cyan,magenta (36 bands). */
+		static const uint32_t cyc[6] = { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF,
+						 0xFFFFFF00, 0xFF00FFFF, 0xFFFF00FF };
+		for (uint32_t y = 0; y < create.height; y++) {
+			uint32_t *row = (uint32_t *)((char *)buf + (size_t)y * create.pitch);
+			uint32_t c = cyc[(y / 100) % 6];
+			for (uint32_t x = 0; x < create.width; x++)
+				row[x] = c;
+		}
+		fprintf(stderr, "framebuffer filled with 100-line cycling bands\n");
+	} else if (getenv("QKX_PATTERN") && atoi(getenv("QKX_PATTERN")) == 2) {
+		/* 8 bands down the frame (by line): red, green, blue, white, yellow, cyan, magenta, orange.
+		 * Shows which frame lines decode correctly. */
+		static const uint32_t band[8] = { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF,
+						  0xFFFFFF00, 0xFF00FFFF, 0xFFFF00FF, 0xFFFF8000 };
+		for (uint32_t y = 0; y < create.height; y++) {
+			uint32_t *row = (uint32_t *)((char *)buf + (size_t)y * create.pitch);
+			uint32_t c = band[(y * 8) / create.height];
+			for (uint32_t x = 0; x < create.width; x++)
+				row[x] = c;
+		}
+		fprintf(stderr, "framebuffer filled with 8 row bands\n");
+	} else if (getenv("QKX_PATTERN") && atoi(getenv("QKX_PATTERN")) == 4) {
+		/* Clean split: left half RED, right half GREEN, NO grid lines */
+		for (uint32_t y = 0; y < create.height; y++) {
+			uint32_t *row = (uint32_t *)((char *)buf + (size_t)y * create.pitch);
+			for (uint32_t x = 0; x < create.width; x++)
+				row[x] = (x < create.width / 2) ? 0xFFFF0000 : 0xFF00FF00;
+		}
+		fprintf(stderr, "framebuffer filled with clean split (left RED, right GREEN, no grid)\n");
+	} else if (getenv("QKX_PATTERN")) {
 		/* Quadrants TL red, TR green, BL blue, BR white, black grid every 120px:
 		 * shows link/half geometry, and DSC damage lines up with 480px slices. */
 		static const uint32_t quad[4] = { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF };

@@ -1,1 +1,1 @@
-obj-m += qkx_regdump.o
+obj-m += qkx_android_regdump.o

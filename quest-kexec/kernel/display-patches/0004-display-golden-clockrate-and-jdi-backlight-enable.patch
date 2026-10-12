@@ -1,0 +1,81 @@
+diff --git a/techpack/display/msm/dsi/dsi_ctrl.c b/techpack/display/msm/dsi/dsi_ctrl.c
+index 18177a81f..9ddfd2d8a 100644
+--- a/techpack/display/msm/dsi/dsi_ctrl.c
++++ b/techpack/display/msm/dsi/dsi_ctrl.c
+@@ -938,6 +938,18 @@ static int dsi_ctrl_update_link_freqs(struct dsi_ctrl *dsi_ctrl,
+ 		bit_rate = min_dsi_clk_hz * frame_time_us;
+ 		do_div(bit_rate, dsi_transfer_time_us);
+ 		bit_rate = bit_rate * num_of_lanes;
++	} else if (timing->dsc_enabled) {
++		/*
++		 * QKX: In video mode with DSC and DFPS, timing->refresh_rate is an
++		 * integer (e.g. 90 or 60), but DFPS changes v_front_porch so the
++		 * true refresh rate has fractional Hz. Computing bit_rate with the
++		 * integer refresh_rate truncates the clock (e.g. 191056320 instead
++		 * of 191082240 Hz), creating a 135 ppm drift that empties the panel's
++		 * DSC rate buffer after ~100 scanlines.
++		 * Lock pixel clock to the golden rate 191082240 Hz.
++		 */
++		bit_rate = (u64)191082240 * bpp;
++		pr_err("QKXDBG: forced video+dsc golden bit_rate=%llu (pclk=191082240)\n", bit_rate);
+ 	} else {
+ 		h_period = DSI_H_TOTAL_DSC(timing);
+ 		v_period = DSI_V_TOTAL(timing);
+diff --git a/techpack/display/msm/dsi/dsi_panel.c b/techpack/display/msm/dsi/dsi_panel.c
+index 2b6a168f9..053b0a900 100644
+--- a/techpack/display/msm/dsi/dsi_panel.c
++++ b/techpack/display/msm/dsi/dsi_panel.c
+@@ -489,7 +489,10 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
+ {
+ 	int rc = 0;
+ 
++	DSI_ERR("QKXDBG: dsi_panel_power_on called, panel=%s\n", panel->name);
++
+ 	rc = dsi_pwr_enable_regulator(&panel->power_info, true);
++	DSI_ERR("QKXDBG: dsi_pwr_enable_regulator(true) rc=%d\n", rc);
+ 	if (rc) {
+ 		DSI_ERR("[%s] failed to enable vregs, rc=%d\n",
+ 				panel->name, rc);
+@@ -503,6 +506,7 @@ static int dsi_panel_power_on(struct dsi_panel *panel)
+ 	}
+ 
+ 	rc = dsi_panel_reset(panel);
++	DSI_ERR("QKXDBG: dsi_panel_reset rc=%d\n", rc);
+ 	if (rc) {
+ 		DSI_ERR("[%s] failed to reset panel, rc=%d\n", panel->name, rc);
+ 		goto error_disable_gpio;
+@@ -849,6 +853,9 @@ static int dsi_panel_jdi_update_backlight(struct dsi_panel *panel,
+ 		goto error;
+ 	}
+ 
++	DSI_ERR("QKXDBG: jdi_update_backlight lvl=%u vtotal=%u right_sl=%u left_sl=%u rc=%d\n",
++		bl_lvl, vtotal, right_scanline, left_scanline, rc);
++
+ 	bl_config->jdi_scanline_duration = bl_lvl;
+ 	bl_config->jdi_scanline_offset[0] = right_scanline;
+ 	bl_config->jdi_scanline_offset[1] = left_scanline;
+@@ -5242,7 +5249,12 @@ int dsi_panel_enable(struct dsi_panel *panel)
+ 
+ 	mutex_lock(&panel->panel_lock);
+ 
++	DSI_ERR("QKXDBG: dsi_panel_enable called, panel=%s\n", panel->name);
++
+ 	rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_ON);
++
++	DSI_ERR("QKXDBG: dsi_panel_tx_cmd_set(DSI_CMD_SET_ON) returned rc=%d\n", rc);
++
+ 	if (rc)
+ 		DSI_ERR("[%s] failed to send DSI_CMD_SET_ON cmds, rc=%d\n",
+ 		       panel->name, rc);
+@@ -5274,6 +5286,11 @@ int dsi_panel_post_enable(struct dsi_panel *panel)
+ 		       panel->name, rc);
+ 		goto error;
+ 	}
++
++	if (panel->bl_config.type == DSI_BACKLIGHT_JDI) {
++		DSI_ERR("QKXDBG: calling dsi_panel_jdi_update_backlight(255) in post_enable\n");
++		dsi_panel_jdi_update_backlight(panel, 255);
++	}
+ error:
+ 	mutex_unlock(&panel->panel_lock);
+ 	return rc;

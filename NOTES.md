@@ -2382,10 +2382,20 @@ sync
 echo 3 > /proc/sys/vm/drop_caches
 ```
 
-### 2. Dual-Plane Video Player Execution
-In pure kexec Linux, the video player binary `/bin/kms_play` decodes and displays video containers directly to the dual layer mixers (Plane 101 + Plane 98):
+### 2. Dual-Plane Video Player Execution (Stereo VR Side-by-Side)
+In pure kexec Linux, the video player binary `/bin/kms_play_vr` decodes and displays stereo video containers directly to the dual layer mixers (Plane 101 for Left Eye + Plane 98 for Right Eye):
+
+> [!IMPORTANT]
+> The Meta Quest 2 uses a single physical 3664×1920 panel mounted in portrait orientation (`1920` wide × `3664` high).
+> Video frames must be formatted as side-by-side stereo (Left: [0..1832], Right: [1832..3664] on a 3664×1920 landscape canvas), and then rotated 90° clockwise into 1920×3664.
+> KMS Planes:
+> - Plane 101 (Left Eye): bounds `[0, 0, 960, 3664]`
+> - Plane 98 (Right Eye): bounds `[960, 0, 960, 3664]`
+> Launching without killing previous KMS master processes will result in `errno=13` (`EACCES`). Always kill active players first.
+
 ```bash
-/bin/kms_play /tmp/testvideo.qkxv
+killall -9 kms_play_vr kms_play kms_atomic_dual 2>/dev/null || true
+/bin/kms_play_vr /tmp/testvideo_vr.qkxv
 ```
 To run fastfetch over the network gadget on host PC:
 ```bash
@@ -2396,3 +2406,22 @@ fastfetch
 ### 3. Early-Boot RCU Stalls (Crypto / SPMI / RCU)
 Early kexec boot can occasionally hit a non-fatal scheduling delay during `cryptomgr_notify` / `aes_init` / `spmi_cleanup_irq`. With `panic=0` and non-fatal watchdog handling, the kernel boots through. A clean retry after reboot reliably succeeds.
 
+---
+
+## Verified Backup Snapshot: Stereo Dual-Plane Video (2026-10-12)
+
+Verified working configuration where pure kexec Linux boots, Arch Linux ARM fastfetch renders, and full stereo VR video plays smoothly across both eyes.
+
+* **Tarball Archive**: `/Users/waffles/quest2-kexec-backups/working-video-dualplane-20261012-081950.tar.gz` (55 MB)
+* **Standalone Backup**: `/Users/waffles/quest2-kexec-backups/working-video-dualplane-20261012-081950/`
+* **Repository Mirror**: `build/working-video-dualplane-2026-10-12/`
+
+### Verified SHA256 Checksums:
+```text
+9189f98f0920e524bb1e19d5cde0ad469480091beff8a8af2bb75967fd7b04db  boot.dtb
+684a8462c7bb61ccfd0da1f635e77425fe5d97ff7dc150709491ec6a00dd1539  Image
+881f4cd91096663d9219e2829b9d163bc6c737e7af3c68766a882156f1dd2b14  initramfs
+e1ec6fcf697c09291a466a14f48c84651faba9609499aa5d7bd5d88b618061bf  quest_kexec.ko
+b1adc405633727ec01aa469f3529991b635da4892aef3246337b7f54029ac1b2  kms_play_vr
+a10cca5bb020e183361ad40bd4fd3e5498599b22ddff90542a09d99aae806712  testvideo_vr.qkxv
+```

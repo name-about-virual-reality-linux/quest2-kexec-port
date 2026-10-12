@@ -2345,3 +2345,54 @@ We implemented `kms_atomic_dual`:
 * Directory: `build/working-dualplane-clean-2026-10-11/`
 * Tarball: `/Users/waffles/quest2-kexec-backups/working-dualplane-clean-20261011-230409.tar.gz`
 * Git Commit: `f08eefeb8d8127027740710d06ef4277bb1031db`
+
+## 2026-10-12: System Protection Stripping & Clean kexec Transition Procedure
+
+To eliminate Android crash loops, watchdog barking panics (`Panic triggered due to watchdog bark!`), and early aborts prior to jumping into Linux:
+
+### 1. Mandatory Pre-Jump Protection Stripping
+Always execute the following on Android before `insmod quest_kexec.ko`:
+```bash
+# 1. Disable kernel panic escalation on non-fatal warnings
+echo 0 > /proc/sys/kernel/panic
+echo 0 > /proc/sys/kernel/panic_on_oops
+echo 0 > /proc/sys/kernel/panic_on_rcu_stall
+echo 0 > /proc/sys/kernel/panic_on_warn
+
+# 2. Set SELinux to permissive
+setenforce 0
+
+# 3. Kill background crash reporters & camera watchdogs
+for s in cameraserver virtual_camera bootanim bugreportservice crashreporterd; do
+    setprop ctl.stop $s
+done
+kill -9 $(pidof ovr_crashreporter64 ovr_crashuploader64 cameraserver) 2>/dev/null || true
+
+# 4. Cleanly stop TrustZone / TEE listeners (prevents stale buffer locks across kexec)
+for s in vendor.oculus.hardware.attestation-service \
+         vendor.oculus.devicecert-hal-1-0 \
+         gatekeeperd gatekeeper-1-0 \
+         vendor.keymaster-4-1 \
+         vendor.spdaemon vendor.qseecomd; do
+    setprop ctl.stop $s
+done
+
+# 5. Drop page caches to free RAM
+sync
+echo 3 > /proc/sys/vm/drop_caches
+```
+
+### 2. Dual-Plane Video Player Execution
+In pure kexec Linux, the video player binary `/bin/kms_play` decodes and displays video containers directly to the dual layer mixers (Plane 101 + Plane 98):
+```bash
+/bin/kms_play /tmp/testvideo.qkxv
+```
+To run fastfetch over the network gadget on host PC:
+```bash
+telnet 10.42.0.2 23
+fastfetch
+```
+
+### 3. Early-Boot RCU Stalls (Crypto / SPMI / RCU)
+Early kexec boot can occasionally hit a non-fatal scheduling delay during `cryptomgr_notify` / `aes_init` / `spmi_cleanup_irq`. With `panic=0` and non-fatal watchdog handling, the kernel boots through. A clean retry after reboot reliably succeeds.
+

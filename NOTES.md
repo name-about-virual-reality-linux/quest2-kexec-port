@@ -2539,3 +2539,23 @@ Goal: mount encrypted userdata (sda9, 54G) from kexec kernel. Result:
   contents mode 127; per-boot bundling script (extract->initramfs->ADD_KEY
   ioctl->mount sda9) not yet written. Keys must be re-extracted per boot.
 - Committed: `tools/kdump.c`, `tools/kpolicy.c`, `tools/keyperm/` (d0a1452).
+
+### Corroboration (independent path, same session)
+- `tools/kcap.c` (ptrace tracer, no kernel module) captured vold's
+  ADD_ENCRYPTION_KEY for CE-user0 at unlock: desc ff56a2ac60835a6c,
+  raw `d56dcaab...fbe89b` -- BYTE-IDENTICAL to the kextract line above.
+  Two independent methods, same key. Saved (0600) also at
+  `backups/ce-user0-key/` (descriptor.txt/key.bin/key.hex).
+- Lock/unlock recipe that worked: set PIN (`cmd lock_settings set-pin`),
+  soft-reboot left CE invalidated, `cmd lock_settings verify --old`
+  reinstalls under trace. Oculus lockscreen never calls lockUserKey;
+  ILockSettings (A14) has no lock/unlock -- use `mount`-service 64/65
+  and IVold lockCeStorage=45/unlockCeStorage=44/getUnlockedUsers=43.
+- WARNING: `service call vold 36` (initUser0) hangs the caller and
+  soft-reboots system_server. Otherwise harmless (keys reinstall).
+- Target kernel gap CONFIRMED from qkx-target-out/.config:
+  `# CONFIG_F2FS_FS_ENCRYPTION is not set` (FS_ENCRYPTION=y,
+  BLK_INLINE_ENCRYPTION=y + FALLBACK=y, FS_ENCRYPTION_INLINE_CRYPT=y
+  all present). Needs a target rebuild with F2FS_FS_ENCRYPTION=y
+  before sda9 mount can decrypt. Device-side state restored: PIN
+  cleared, guest users gone, 30G free on userdata.

@@ -2425,3 +2425,83 @@ e1ec6fcf697c09291a466a14f48c84651faba9609499aa5d7bd5d88b618061bf  quest_kexec.ko
 b1adc405633727ec01aa469f3529991b635da4892aef3246337b7f54029ac1b2  kms_play_vr
 a10cca5bb020e183361ad40bd4fd3e5498599b22ddff90542a09d99aae806712  testvideo_vr.qkxv
 ```
+
+## 2026-10-12/13: Holo desktop on panel + tracking bring-up (IMU/controllers)
+
+### DE: Stage-1 Holo desktop WORKS on the panel (verified in-headset)
+- Xvfb 3664x1920 + openbox + per-eye xterms, presented via new
+  `drm-test/kms_dual_image` (XWD snapshot -> 90deg rotate -> proven
+  dual-plane atomic commit, planes 101/98). Refreshes on file mtime.
+- Rotation ground truth (user-measured, corners A/B/C/D card): CCW, no
+  swap (`QKX_ROT=1`). The video path's transpose=1 was never orientation-
+  verified; trust eyes, not history.
+- Per-eye visible bands measured with a numbered ruler card: left eye
+  sees landscape x 400-1200, right eye 2400-3600, ~1200px bridge gap
+  between (nose bridge + lens falloff). Keep all content inside bands;
+  single-window-spanning-the-seam does NOT fuse. Two contained terminals
+  (verified via xwininfo + snapshots) is the correct Stage-1 layout.
+- X clients render +770px right of tree position (constant, virgin
+  server, no WM; root-caused empirically with 4-marker test, mechanism
+  unknown). Compensate placement by -770 (positive coords only; negative
+  geometry hits right-anchor semantics).
+- Input: `drm-test/xtest_dl` (dlopen libX11/libXtst, XTEST inject from a
+  command file) verified live with xev (keycode 46) + typed text on
+  screen. Raw-protocol xtest_inject kept for reference (XTestFakeInput
+  key/button = 8 words, motion = 9; Xvfb rejects wide GetKeyboardMapping).
+- fastfetch renders on-panel (llvmpipe, 10.42.0.2, overlay).
+- Plasma 6.5 stack installs (plasma-desktop/workspace, kwin, konsole,
+  dolphin) but kwin+plasmashell together OOM-wedge the target twice.
+  Lean path (kwin_x11 manually, no session/autostart) assembled but
+  untested. Plasma needs small-batch installs + immediate pkg-cache
+  cleans (tmpfs!) and `yes ""` for provider prompts (--noconfirm alone
+  does not answer number prompts).
+- Infra: 4G /tmp + 1G zram swap on target; Mac NAT (pf + forwarding)
+  for ECM internet; IPv6 off on usb0 + gai.conf (pacman stalls on AAAA
+  otherwise); pacman SigLevel Optional (no keyring dance on Holo);
+  static IPv4 http server binds (IPv6-only socket fails ECM clients).
+- Tools: `tools/qkx-save.sh` + `qkx-save-pull.sh` (overlay-upper save/
+  restore over ECM HTTP, SHA256SUMS). Full FS backup pulled 2.5GB/100k
+  files to backups dir. `persist` partition (64M) backed up (serials +
+  IPD/lens/display calibration!) -- kept OUT of git (unit PII).
+- NAND verdict: userdata FBE-encrypted (superblock verified random),
+  hardware-bound keys, unmountable from kexec. Repartitioning refused
+  (brick risk, locked bootloader, no EDL). sda7 (xros_b, 128M) reads
+  all zeros (candidate scratch, unidentified -- NO writes). persist as
+  boot-kit is the safe NAND use. USB-OTG SSD is the real persistent
+  distro path (needs a dongle).
+
+### Tracking: full map, IMU one message away
+- Controllers = standard BT HID gamepads (MODALIAS b0006, gamepad
+  keys/hats/6 ABS axes) via Oculus runtime virtual input (uinput-style,
+  creator closes fds; BT link bypasses BlueDroid tracking). Live
+  BTN_TR/TR2 events captured. BT HID pairing viable IF HCI comes up;
+  HCI blocked on QCA6390 power sequencing (rfkill stuck, no slim
+  slaves, btfm silent; needs Android power-sequence capture).
+- HMD IMU = ICM42688 behind syncboss MCU (SPI), NOT direct Linux bus.
+  Factory + online + temperature calibration + all 4x OV7251 camera
+  calibrations CAPTURED from sensorservice (backups dir, not git).
+- kexec link proven live end to end: GENI-SPI narrow re-enable (serial/
+  I2C stay off -- dodges the SMMU boot hang), nsync DT enable, syncboss
+  probe clean, /dev nodes up, MCU wakes in 184ms, timesync traffic
+  flows, correct 248B framing (Android uses 248, not 512).
+- libsyncboss.so RE'd: IMU = packet type 80; NO subscribe write in the
+  enable path (pure userspace state + stream reads); stream filter
+  ioctl documented; powerstate replays event on open; ENABLE_TIMESYNC
+  (type 8) sent with no observed effect.
+- Syncboss API inventory: syncboss_{init,imu_enable[_id],
+  imu_set_data_rate,imu_get_reg,stream_open/decode/filter},
+  powerstate_{init,wait}, direct-channel dma (needs DT node absent
+  everywhere incl. stock; driver needed 4.19 backports: dma-resv shim,
+  uaccess include, DMA_BIT_MASK, MODULE_IMPORT_NS guard -- all in tree).
+- Direct-channel kernel build HANGS dark twice (GENI image boots fine);
+  cause undetermined (pstore overwritten by Android both times).
+  Suspect the probe path, not the DT node (absent node = dormant).
+- OPEN: the one trigger message for IMU flow. Candidates: HAL
+  subscribe bytes (needs strace/LD_PRELOAD on Android -- static strace
+  6.1 cross-built and ready in /tmp/strace-build), nsync-lock gating
+  (nsync IRQ registration fails with flags mismatch), direct-channel
+  config (needs DT node + working build).
+- ARTIFACTS: /tmp/vrhal (sensors-service, vrsensorsctl, libsyncboss*.so,
+  disassembly), /tmp/sbhal (syncboss driver sources), static strace
+  pushed to /data/local/tmp/strace on-device. Kernel trees exported
+  post-session (docker-volumes/*-20261013.tar).

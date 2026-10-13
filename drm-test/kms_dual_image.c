@@ -134,6 +134,32 @@ static int load_xwd(const char *path, uint8_t **px, uint32_t *w, uint32_t *h) {
  * CCW: portrait (px,py) shows landscape (lx=3663-py, ly=px). */
 static int g_rot_ccw = 0;
 static int g_swap = 0;
+/* Look-around pan (landscape px, applied in source space before rotation).
+ * Driven live by QKX_PAN_X/QKX_PAN_Y env (re-read every frame) or a pose
+ * file (QKX_POSE_FILE, two ints "x y"). Positive X looks right. */
+static int g_pan_x = 0;
+static int g_pan_y = 0;
+static const char *g_pose_file = NULL;
+
+static void blit_poll_pan(void) {
+    const char *e;
+    if (g_pose_file) {
+        FILE *f = fopen(g_pose_file, "r");
+        if (f) {
+            int x = 0, y = 0;
+            if (fscanf(f, "%d %d", &x, &y) == 2) {
+                g_pan_x = x;
+                g_pan_y = y;
+            }
+            fclose(f);
+            return;
+        }
+    }
+    e = getenv("QKX_PAN_X");
+    if (e) g_pan_x = atoi(e);
+    e = getenv("QKX_PAN_Y");
+    if (e) g_pan_y = atoi(e);
+}
 
 static void blit_rotated(uint32_t *dst, uint32_t dst_pitch_px,
                          const uint8_t *src, uint32_t dst_w, uint32_t dst_h) {
@@ -141,11 +167,17 @@ static void blit_rotated(uint32_t *dst, uint32_t dst_pitch_px,
     for (uint32_t py = 0; py < dst_h; py++) {
         for (uint32_t px = 0; px < dst_w; px++) {
             uint32_t dx = g_swap ? (dst_w - 1 - px) : px;
-            uint32_t v;
-            if (!g_rot_ccw)
-                v = s[(uint32_t)(SRC_H - 1 - dx) * SRC_W + py];
-            else
-                v = s[dx * SRC_W + (SRC_W - 1 - py)];
+            int lx, ly;
+            if (!g_rot_ccw) {
+                lx = (int)py + g_pan_x;
+                ly = (int)(SRC_H - 1 - dx) + g_pan_y;
+            } else {
+                lx = (int)(SRC_W - 1 - py) + g_pan_x;
+                ly = (int)dx + g_pan_y;
+            }
+            uint32_t v = 0xFF000000; /* letterbox */
+            if (lx >= 0 && lx < (int)SRC_W && ly >= 0 && ly < (int)SRC_H)
+                v = s[(uint32_t)ly * SRC_W + (uint32_t)lx];
             dst[py * dst_pitch_px + px] = v;
         }
     }
@@ -165,7 +197,10 @@ int main(int argc, char **argv) {
     int hold_s = getenv("QKX_HOLD") ? atoi(getenv("QKX_HOLD")) : 0;
     g_rot_ccw = getenv("QKX_ROT") ? atoi(getenv("QKX_ROT")) : 0;
     g_swap = getenv("QKX_SWAP") ? atoi(getenv("QKX_SWAP")) : 0;
-    fprintf(stderr, "blit: rot=%s swap=%d\n", g_rot_ccw ? "CCW" : "CW", g_swap);
+    g_pose_file = getenv("QKX_POSE_FILE");
+    fprintf(stderr, "blit: rot=%s swap=%d pose=%s\n",
+            g_rot_ccw ? "CCW" : "CW", g_swap,
+            g_pose_file ? g_pose_file : "(env)");
     if (dt_ms < 100) dt_ms = 100;
 
     int fd = open(card, O_RDWR);
@@ -367,12 +402,15 @@ int main(int argc, char **argv) {
     struct timespec t0, now;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     long last_mtime = -1;
+    int last_pan_x = 0x7fffffff, last_pan_y = 0x7fffffff;
     int frames = 0;
     for (;;) {
         struct stat st;
         int have_img = 0;
         uint8_t *raw = NULL;
         uint32_t iw = 0, ih = 0;
+        blit_poll_pan();
+        int pan_changed = (g_pan_x != last_pan_x || g_pan_y != last_pan_y);
         if (stat(img, &st) == 0 && (long)st.st_mtime != last_mtime) {
             if (load_xwd(img, &raw, &iw, &ih) == 0 && iw == SRC_W && ih == SRC_H) {
                 blit_rotated(pixels, pitch_px, raw, mode.hdisplay, mode.vdisplay);
@@ -386,7 +424,7 @@ int main(int argc, char **argv) {
         } else if (frames == 0) {
             fill_pattern(pixels, pitch_px, mode.hdisplay, mode.vdisplay);
         }
-        if (frames > 0 && !have_img && (long)st.st_mtime == last_mtime) {
+        if (frames > 0 && !have_img && (long)st.st_mtime == last_mtime && !pan_changed) {
             /* unchanged since last commit: just wait */
         } else {
             uint32_t objs[4] = { chosen_crtc, chosen_conn, plane_left, plane_right };
@@ -440,6 +478,8 @@ int main(int argc, char **argv) {
                 return 1;
             }
             frames++;
+            last_pan_x = g_pan_x;
+            last_pan_y = g_pan_y;
             fprintf(stderr, "frame %d committed (%s)\n", frames, have_img ? img : "pattern");
         }
         clock_gettime(CLOCK_MONOTONIC, &now);

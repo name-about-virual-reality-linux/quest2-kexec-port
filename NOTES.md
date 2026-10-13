@@ -2505,3 +2505,37 @@ a10cca5bb020e183361ad40bd4fd3e5498599b22ddff90542a09d99aae806712  testvideo_vr.q
   disassembly), /tmp/sbhal (syncboss driver sources), static strace
   pushed to /data/local/tmp/strace on-device. Kernel trees exported
   post-session (docker-volumes/*-20261013.tar).
+
+## 2026-10-13: userdata FBE keys extracted live (Quest 2 NAND rootfs path)
+
+Goal: mount encrypted userdata (sda9, 54G) from kexec kernel. Result:
+**all 4 raw master keys captured from the running kernel.**
+
+- Root was lost after the hang-test reboot (slot _a, stock boot); re-rooted
+  via Magisk app, `su -c id` = uid 0 again.
+- Recon (rootless+root): FBE v1, `filenames_mode=aes-256-cts`,
+  `uses_fs_ioc_add_encryption_key=true`; /data = dm-49 = plain linear 1:1
+  over sda9 (name=userdata, single slave, no dm-crypt layer). Metadata/content
+  encryption is inline (mount opt `inlinecrypt`, contents mode 127=PRIVATE).
+- /proc/keys: 4x `._fscrypt` master keys (in `fscrypt-dm-49` keyring) + 4x
+  `fscrypt-provisioning`. No `keyctl` binary on stock; Magisk busybox lacks
+  the applet. Wrote `tools/kdump.c` (raw syscalls, static) instead.
+- keyctl READ is refused by design: provisioning keys EOPNOTSUPP (no .read),
+  `._fscrypt` keys EACCES (poss=SEARCH only). A `keyperm.ko` perm-flip (via
+  `key_lookup` address from /proc/kallsyms after lowering kptr_restrict;
+  kallsyms_lookup_name is NOT exported on stock) moved EACCES->EOPNOTSUPP,
+  proving `._fscrypt` also has no .read (payload = kernel struct pointer).
+- `tools/keyperm/kextract.c` dumps `mk_secret` directly (exact layouts via
+  the real `fs/crypto/fscrypt_private.h`; RANDSTRUCT off, configs verified
+  identical). Identifier-vs-description match validated every key.
+- Finding: **all 4 secrets size=64, is_hw_wrapped=0 = RAW v1 keys, no TEE
+  dependency.** Raw 64B blobs + map in
+  `/Users/waffles/quest2-kexec-backups/fbe-keys-20261013/` (600, NOT in git):
+  - `ab9b06a9...` device DE, `ff56a2ac...` CE user0, `ecf433dd...` DE user0,
+    `1335229a...` per_boot ephemeral (init log confirms).
+  - Policies v1, contents PRIVATE(127)/filenames CTS(4) (`tools/kpolicy.c`).
+- Still open: target needs `CONFIG_F2FS_FS_ENCRYPTION` (currently unset;
+  FS_ENCRYPTION/F2FS/INLINE_CRYPT present) + ICE inline-crypt path for
+  contents mode 127; per-boot bundling script (extract->initramfs->ADD_KEY
+  ioctl->mount sda9) not yet written. Keys must be re-extracted per boot.
+- Committed: `tools/kdump.c`, `tools/kpolicy.c`, `tools/keyperm/` (d0a1452).

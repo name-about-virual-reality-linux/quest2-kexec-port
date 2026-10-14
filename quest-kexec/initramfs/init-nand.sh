@@ -175,6 +175,9 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	# survive switch_root (old root is wiped, but open fds stay), so :2323
 	# stays reachable even if Arch systemd never brings up networking.
 	cp /sbin/qkx-sh-static /newroot/sbin/qkx-sh-static
+	log "static cp rc=$?; newroot sbin: $(ls -l /newroot/sbin/qkx-sh-static 2>&1)"
+	log "userdata mount: $(mount | grep ' /userdata ')"
+	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
 	(while :; do telnetd -F -l /sbin/qkx-sh-static -p 2323; sleep 1; done) &
 	log "debug shell on :2323; switching root to Arch systemd"
 	exec switch_root /newroot /sbin/init

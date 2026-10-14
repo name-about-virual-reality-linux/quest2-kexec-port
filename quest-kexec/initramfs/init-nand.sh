@@ -162,15 +162,32 @@ for p in $(cat /proc/cmdline); do
 done
 
 if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
-	log "remounting rw and switching to Arch"
 	mount -o remount,rw /userdata
-	mount --bind /userdata/media/0/qkx-root /newroot
+	TARGET_ROOT=/userdata/media/0/qkx-root
+	TARGET_OS=arch
+	for p in $(cat /proc/cmdline); do
+		case "$p" in qkx_root=*) TARGET_OS="${p#qkx_root=}";; esac
+	done
+	if [ -f /userdata/media/0/boot_os ]; then
+		TARGET_OS="$(cat /userdata/media/0/boot_os | tr -d '\r\n ')"
+	fi
+	if [ "$TARGET_OS" = "holo" ] || [ "$TARGET_OS" = "steamos" ]; then
+		if [ -d /userdata/media/0/holo-root/bin ]; then
+			TARGET_ROOT=/userdata/media/0/holo-root
+			log "switching to Holo Core (SteamOS) at $TARGET_ROOT"
+		else
+			log "holo-root not found; falling back to Arch at $TARGET_ROOT"
+		fi
+	else
+		log "switching to Arch Linux at $TARGET_ROOT"
+	fi
+	mount --bind "$TARGET_ROOT" /newroot
 	mount --bind /dev /newroot/dev
 	mount --bind /proc /newroot/proc
 	mount --bind /sys /newroot/sys
 	mount -t tmpfs tmpfs /newroot/tmp
 	mount -t tmpfs tmpfs /newroot/run 2>/dev/null
-	# Keep userdata accessible inside Arch Linux at /userdata
+	# Keep userdata accessible inside guest OS at /userdata
 	mkdir -p /newroot/userdata
 	mount --bind /userdata /newroot/userdata 2>/dev/null
 	# Debug shell that survives switch_root: static binary copied into the
@@ -185,7 +202,7 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	log "static cp rc=$?; newroot sbin: $(ls -l /newroot/sbin/qkx-sh-static 2>&1)"
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
-	# Create 4.19-compatible PID 1 init script for Arch Linux
+	# Create 4.19-compatible PID 1 init script for guest OS
 	# (bypasses systemd v261 STATX_MNT_ID / EUNATCH failure on Linux 4.19)
 	cat << 'EOINIT' > /newroot/sbin/qkx-init
 #!/bin/sh
@@ -193,7 +210,10 @@ export PATH=/usr/bin:/usr/sbin:/bin:/sbin
 export HOME=/root
 export TERM=vt100
 
-echo "=== QKX ARCH INIT (PID 1) STARTING ===" > /dev/kmsg
+OS_BANNER="Linux"
+[ -f /etc/os-release ] && . /etc/os-release && OS_BANNER="${PRETTY_NAME:-$NAME}"
+
+echo "=== QKX $OS_BANNER INIT (PID 1) STARTING ===" > /dev/kmsg
 
 # Mount standard pseudo-filesystems
 [ -d /proc/1 ] || mount -t proc proc /proc
@@ -213,22 +233,30 @@ ip link set usb0 up 2>/dev/null
 
 echo "qkx-init: network up (10.42.0.2 on usb0)" > /dev/kmsg
 
-# Start persistent telnet debug shells in Arch root
-(while :; do (telnetd -F -l /bin/sh -p 23 || /dev/sh -c 'telnetd -F -l /dev/sh -p 23'); sleep 1; done) &
-(while :; do (telnetd -F -l /bin/sh -p 2323 || /dev/sh -c 'telnetd -F -l /dev/sh -p 2323'); sleep 1; done) &
+# Install BusyBox symlinks into /bin if busybox is present
+[ -x /bin/busybox ] && /bin/busybox --install -s /bin 2>/dev/null
+
+# Start persistent telnet debug shells in target root
+(while :; do (/bin/busybox telnetd -F -l /bin/sh -p 23 || telnetd -F -l /bin/sh -p 23 || /dev/sh telnetd -F -l /bin/sh -p 23); sleep 1; done) &
+(while :; do (/bin/busybox telnetd -F -l /bin/sh -p 2323 || telnetd -F -l /bin/sh -p 2323 || /dev/sh telnetd -F -l /bin/sh -p 2323); sleep 1; done) &
 
 echo "qkx-init: shells active on :23 and :2323" > /dev/kmsg
 
+# Ensure sshd privilege-separation user and directories exist
+mkdir -p /usr/share/empty.sshd /var/empty
+grep -q '^sshd:' /etc/passwd 2>/dev/null || echo 'sshd:x:74:74:Privilege-separated SSH:/usr/share/empty.sshd:/bin/false' >> /etc/passwd
+grep -q '^sshd:' /etc/group 2>/dev/null || echo 'sshd:x:74:' >> /etc/group
+
 # Fix SSH permissions and start sshd if installed
 if [ -x /usr/bin/sshd ]; then
-	chown 0:0 /usr/share/empty.sshd 2>/dev/null
-	chmod 755 /usr/share/empty.sshd 2>/dev/null
+	chown 0:0 /usr/share/empty.sshd /var/empty 2>/dev/null
+	chmod 755 /usr/share/empty.sshd /var/empty 2>/dev/null
 	chown -R 0:0 /etc/ssh 2>/dev/null
 	chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null
 	/usr/bin/sshd 2>/dev/null &
 fi
 
-echo "=== ARCH LINUX READY (10.42.0.2) ===" > /dev/kmsg
+echo "=== $OS_BANNER READY (10.42.0.2) ===" > /dev/kmsg
 
 # Run user startup script if present
 [ -x /etc/rc.local ] && /etc/rc.local &

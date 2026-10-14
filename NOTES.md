@@ -2920,3 +2920,41 @@ and individually verified, live kexec mount test still open.
   - Memory: 149 MiB / 5.70 GiB
   - Disk (/): 28.03 GiB / 52.69 GiB (53%) f2fs
   - Battery: 11% [Charging]
+
+### VICTORY: SteamOS / Holo Core Booted on Quest 2 NAND (UFS `/dev/sda9`) via SSH!
+- **Target OS**: `Holo core Aarch64 port (preview)` (Valve / Collabora SteamOS ARM preview for Steam Frame).
+- **Build / Release**: `VERSION_ID=mash-20251118.3`, `BUILD_ID=251368`, `ID=holo-core`, `ID_LIKE=arch`.
+- **Rootfs Deployment**: 1.3GB rootfs extracted directly into `/data/media/0/holo-root` on NAND.
+- **Dual-Boot Switching**: Integrated into `init-nand.sh`. Checks `/userdata/media/0/boot_os` (`holo` vs `arch`) and kernel cmdline `qkx_root=holo|arch`.
+- **Init & PID 1**: Custom `/sbin/qkx-init` running as PID 1, mounting pseudo-filesystems, bringing up `usb0` at `10.42.0.2`, and starting BusyBox telnet and OpenSSH `sshd`.
+- **OpenSSH Daemon**: `sshd` 10.4 running with PAM configuration adapted for root key login; passwordless direct SSH verified:
+  `ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no root@10.42.0.2`
+- **Hardware Status**:
+  - Panel & DRM: `/dev/dri/card0` and `/dev/dri/renderD128` initialized and accessible.
+  - CPUs: 8/8 Kryo / Cortex-A77 cores online up to 2.84 GHz.
+  - RAM: 5.70 GiB total, ~150 MiB used.
+  - Storage: 53 GiB decrypted UFS NAND partition mounted rw at `/` and `/userdata` with 24 GiB free.
+  - Battery: Active charging over USB-C while running.
+
+#### Fastfetch Output (live from headset over SSH):
+```
+                  -`                     root@(none)
+                 .o+`                    -----------
+                `ooo/                    OS: Holo core Aarch64 port (preview)
+               `+oooo:                   Host: Hollywood (DVT)
+              `+oooooo:                  Kernel: Linux 4.19.325-cip128-st12+
+              -+oooooo+:                 Uptime: 3 mins
+            `/:-:++oooo+:                Packages: 140 (pacman)
+           `/++++/+++++++:               Shell: sshd-session: root@notty
+          `/++++++++++++++:              Terminal: sshd 10.4p1
+         `/+++ooooooooooooo/`            CPU: kona (1+3+4) @ 2.84 GHz
+        ./ooosssso++osssssso+`           Memory: 152.93 MiB / 5.70 GiB (3%)
+       .oossssso-````/ossssss+`          Swap: Disabled
+      -osssssso.      :ssssssso.         Disk (/): 29.52 GiB / 52.69 GiB (56%) - f2fs
+     :osssssss/        osssso+++.        Battery: 20% [Charging]
+    /ossssssss/        +ssssooo/-        Locale: C
+  `/ossssso+/:-        -:/+osssso+-      
+ `+sso+:-`                 `.-/+oso:                             
+`++:.                           `-/+/                            
+.`                                 `/
+```

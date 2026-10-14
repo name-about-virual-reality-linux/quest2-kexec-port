@@ -2679,3 +2679,9 @@ and individually verified, live kexec mount test still open.
   F2FS_ENCRYPTION + NBD kept; SENSORS_SSC kept as suspect #2 if the hang
   persists). Target Image rebuilding in docker; will stage as new
   Image-nand + fresh payload and re-attempt (needs re-root).
+
+### GENI-fix kernel built (Image `3f4410fb...`), payload staged
+- Docker build clean (BUILD_RC=0). Old GENI-enabled Image kept as
+  `build/out-target/Image-nand-geni` (gitignored) for bisection reference.
+  Fresh `build/out-payload-nand/` prepared with `qkx_nand=ro`.
+  Awaiting re-root for attempt #4.

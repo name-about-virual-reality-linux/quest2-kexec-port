@@ -2774,3 +2774,14 @@ and individually verified, live kexec mount test still open.
   (rw) staged. Next: rw boot → switch_root to Arch systemd (needs
   return-to-Android + re-kexec; observability after switch_root is the
   open question — no telnet/systemd-network in Arch by default).
+
+### rw observability: Arch sshd + static debug shell
+- Arch side (written from Android su): `10-qkx-usb0.network` (static
+  10.42.0.2/24; networkd already enabled), `sshd_config.d/qkx.conf`
+  (PermitRootLogin yes), root password set (USB-only, documented to user),
+  host keys via native chroot `ssh-keygen -A` (also proves ARM64 exec from
+  Android). sshd already in multi-user wants.
+- Initramfs side: static busybox bundled as `sbin/qkx-sh-static`; rw
+  branch copies it to /newroot/sbin + starts telnetd :2323 on its absolute
+  post-switch path before `exec switch_root` (processes survive the switch,
+  old root is wiped — :2323 stays reachable regardless of systemd).

@@ -28,6 +28,7 @@ BASE="$BASE,cam_jpeg_enc_init_module,cam_lrme_dev_init_module,cam_lrme_hw_init_m
 BASE="$BASE,cam_ois_driver_init,cam_req_mgr_init,cam_res_mgr_init"
 BASE="$BASE,syncboss_direct_channel_init,syncboss_miscfifo_init,syncboss_nsync_init"
 BASE="$BASE,syncboss_powerstate_init,syncboss_init,syncboss_timesync_init"
+BASE="$BASE,cam_sensor_driver_init,cam_smmu_init_module,cam_sync_init,cam_vfe_init_module"
 cd quest-kexec
 python3 tools/prepare.py --live-dtb ../captured-quest2/runtime.dtb \
   --iomem ../captured-quest2/iomem \

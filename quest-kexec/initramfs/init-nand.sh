@@ -1,7 +1,14 @@
 #!/bin/busybox sh
 # Init for NAND Arch boot: ECM gadget + telnet shell, then assemble userdata
-# (f2fs FBE) from /dev/sda9 using keys fetched over ECM HTTP, and
-# optionally switch_root into the Arch rootfs at /data/media/0/qkx-root.
+# (f2fs FBE) from /dev/sda9 and optionally switch_root into the Arch rootfs
+# at /data/media/0/qkx-root.
+#
+# Stock Android presents userdata as dm-49 (dm target "default-key", ICE
+# inline crypto) over sda9: raw sda9 reads are ciphertext, the f2fs magic
+# only appears through the mapping. So this init recreates the same mapping
+# (dmcreate, legacy table `AES-256-XTS <meta> /dev/sda9 0`, metadata key
+# fetched over ECM HTTP), mounts the mapped device ro, then ADD_KEYs the
+# file keys (nand-keys.txt, one "DESC RAW" pair per line) via kadd.
 #
 # Key file format (served by the Mac over ECM HTTP): one "DESC RAW" pair
 # per line, where DESC is the 16-hex-char v1 descriptor and RAW is the
@@ -84,23 +91,43 @@ echo $! > /tmp/telnet.pid
 bootdone d
 qkx-klogwatch -f /tmp/kernel.log >/dev/null 2>&1 &
 
-# --- NAND assembly ---
+# --- NAND assembly via dm-default-key (metadata) + fscrypt (files) ---
+# Stock Android presents userdata as dm-49 (type default-key, ICE inline
+# crypto) over sda9: raw sda9 reads are ciphertext (f2fs magic only appears
+# through the mapping). Recreate the same mapping here, then ADD_KEY the
+# file keys. Legacy table syntax (driver byte-swaps the key per u32 itself):
+#   0 <len> default-key AES-256-XTS <metahex> /dev/sda9 0
 NAND_OK=
 ADDED=0
+DMDEV=
 if [ -e /sys/block/sda/sda9 ]; then
 	log "sda9 present"
 	KEYS=/tmp/nand-keys.txt
-	if wget -q http://10.42.0.1:8000/nand-keys.txt -O "$KEYS"; then
-		log "fetched multi-key file"
-	elif wget -q http://10.42.0.1:8000/nand-key.txt -O "$KEYS"; then
-		log "fetched legacy single-key file"
-	else
-		log "key fetch failed (is the Mac http server up?)"
-		KEYS=
-	fi
-	if [ -n "$KEYS" ]; then
-		if mount -t f2fs -o ro /dev/sda9 /userdata; then
-			log "sda9 mounted ro"
+	META=/tmp/nand-metadata-key.txt
+	got_keys=0; got_meta=0
+	wget -q http://10.42.0.1:8000/nand-keys.txt -O "$KEYS" && got_keys=1
+	[ "$got_keys" = 1 ] || { wget -q http://10.42.0.1:8000/nand-key.txt -O "$KEYS" && got_keys=1; }
+	wget -q http://10.42.0.1:8000/nand-metadata-key.txt -O "$META" && got_meta=1
+	[ "$got_keys" = 1 ] || log "key fetch failed (is the Mac http server up?)"
+	[ "$got_meta" = 1 ] || log "metadata key fetch failed"
+	if [ "$got_keys" = 1 ] && [ "$got_meta" = 1 ]; then
+		read METARAW < "$META"
+		LEN=$(cat /sys/block/sda/sda9/size)
+		[ -e /dev/mapper/control ] || mknod /dev/mapper/control c 10 236
+		if /bin/dmcreate userdata 0 "$LEN" default-key "AES-256-XTS $METARAW /dev/sda9 0"; then
+			for dm in /sys/block/dm-*; do
+				[ "$(cat $dm/dm/name 2>/dev/null)" = userdata ] || continue
+				N=${dm##*/dm-}
+				[ -e /dev/dm-$N ] || mknod /dev/dm-$N b 253 $N
+				DMDEV=/dev/dm-$N
+				break
+			done
+		else
+			log "dm mapping failed"
+		fi
+		rm -f "$META"
+		if [ -n "$DMDEV" ] && mount -t f2fs -o ro "$DMDEV" /userdata; then
+			log "$DMDEV mounted ro"
 			while read DESC RAW _; do
 				case "$DESC" in ""|\#*) continue;; esac
 				if [ -n "$DESC" ] && [ -n "$RAW" ]; then
@@ -122,7 +149,7 @@ if [ -e /sys/block/sda/sda9 ]; then
 				log "decrypt FAILED: qkx-root not readable (added=$ADDED)"
 			fi
 		else
-			log "sda9 mount failed"
+			log "userdata mount failed"
 		fi
 	fi
 else

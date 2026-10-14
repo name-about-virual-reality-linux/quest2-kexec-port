@@ -2709,3 +2709,31 @@ and individually verified, live kexec mount test still open.
 - Warm-reset via `echo r > /proc/qkx_bootdone` (~12s back to Android).
   Root lost again (expected). Evidence: server log + this entry; no pstore
   needed (no crash — init ran to the telnet loop).
+
+### Attempt #4 post-mortem: sda9 raw is ciphertext — dm-49 is dm-default-key
+- Android ground truth (rooted): sda9 start/size IDENTICAL both kernels
+  (13274304/110498584) — map theory dead. Decisive: stock Android reads
+  the SAME garbage at sda9@0x400 (`1f 91 7d d5...`) and zeros at LBA1.
+  The kexec kernel reads perfectly; the flash genuinely holds ciphertext.
+- `dm-49@0x400` = valid f2fs magic `10 20 f5 f2`. dm-49 (name=userdata,
+  size == sda9 size, single slave sda9) TRANSFORMS: the Oct-13
+  "linear 1:1, no dm-crypt layer" recon was wrong.
+- New tool `tools/dmstat.c` (static, DM_TABLE_STATUS ioctl, read-only):
+  dm-49 type = **`default-key`** (Google inline-crypto target, params
+  empty in status). fstab confirms: `fileencryption=ice:aes-256-cts:v1,
+  keydirectory=/metadata/vold/metadata_encryption` — metadata crypto is
+  ICE inline, no software dm-crypt.
+- Read the driver (`drivers/md/dm-default-key.c` in qkx-ksrc): legacy
+  table `AES-256-XTS <keyhex> <dev> <start>` auto-expands to
+  `aes-xts-plain64 ... sector_size:4096 iv_large_sectors`, byte-swaps the
+  key per-u32, and (partitioned dev) adds `start_sect` to iv_offset.
+  Offline XTS test vs live sda9 bytes: **MAGIC-MATCH** with the backup
+  `metadata-key/key.bin` (be32-swapped, DUN=(13274304+0)>>3=1659288,
+  crypto-sector 0, magic at +1024). So key.bin IS the live metadata key
+  (all prior plain64/plain XTS attempts failed only on endianness+DUN).
+- Target already has `CONFIG_DM_DEFAULT_KEY=y`. New tool `tools/dmcreate.c`
+  (DEV_CREATE+TABLE_LOAD+resume) is now bundled in initramfs-nand alongside
+  dmstat; init-nand.sh recreates `userdata` mapping from a fetched
+  `nand-metadata-key.txt`, mounts the MAPPED device, then kadds file keys.
+  `nand-serve-keys.sh` serves the metadata hex too. Rebuilt initramfs
+  (2091810 B). Next: fresh payload + attempt #5 (needs re-root).

@@ -27,6 +27,8 @@ python3 quest-kexec/initramfs/build.py \
   --busybox quest-kexec/out/busybox \
   --init quest-kexec/initramfs/init-nand.sh \
   --extra tools/kadd:bin/kadd \
+  --extra tools/dmcreate:bin/dmcreate \
+  --extra tools/dmstat:bin/dmstat \
   --output quest-kexec/out/initramfs-nand.gz \
   --max-size 0x400000
 ls -l quest-kexec/out/initramfs-nand.gz

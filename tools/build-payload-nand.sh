@@ -9,7 +9,7 @@ if [ ! -f captured-quest2/runtime.dtb ] || [ ! -f captured-quest2/iomem ]; then
 fi
 BASE="$(sed -e 's/softdog.soft_panic=1//' captured-quest2/cmdline)"
 BASE="$BASE rdinit=/init nokaslr printk.devkmsg=on qkx_qmp_adopt=1"
-BASE="$BASE initcall_blacklist=virtual_sensor_driver_init initcall_debug ignore_loglevel"
+BASE="$BASE initcall_debug ignore_loglevel initcall_blacklist=virtual_sensor_driver_init"
 # The kexec transition leaves some hardware (camera stack, syncboss MCU
 # link) in states that wedge deferred probes and stall PID 1 forever
 # (boot roulette). These drivers are irrelevant to the NAND Arch path

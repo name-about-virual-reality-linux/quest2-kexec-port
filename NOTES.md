@@ -2811,3 +2811,12 @@ and individually verified, live kexec mount test still open.
   the NAND cmdline only (display kernel untouched).
 - Camera initcall names mapped for future blacklisting: cam_cci_init_module,
   cam_cci_late_init, cam_isp_dev_init_module (techpack/camera).
+
+### Roulette counter: blacklist camera+syncboss initcalls (NAND cmdline only)
+- pstore from the watchdog_recovery=1 attempt finally gave a full
+  initcall_debug trace: same 30s deferred_probe flush_work hang, kworker
+  spinning, no single driver named (timeout-work also blocks on the flush,
+  so the pending list never prints).
+- Treatment: blacklist the whole camera stack (34 initcalls) + syncboss
+  (6) in the NAND payload cmdline via build-payload-nand.sh. Irrelevant
+  to Arch-on-UFS; display payload keeps its own cmdline.

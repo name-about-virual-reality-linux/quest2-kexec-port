@@ -2820,3 +2820,17 @@ and individually verified, live kexec mount test still open.
 - Treatment: blacklist the whole camera stack (34 initcalls) + syncboss
   (6) in the NAND payload cmdline via build-payload-nand.sh. Irrelevant
   to Arch-on-UFS; display payload keeps its own cmdline.
+
+### Experiment F: Oct-12 known-good payload fails NOW → device-state, not build
+- Pushed byte-verified Oct-12 snapshot (Image 684a8462 / initramfs 881f4cd9
+  / boot.dtb 9189f98f — matches the working-video SHA256SUMS) + jumped:
+  no ping, fast reset back. Even the proven-good stack fails in current
+  device state. Exonerates kernel config/cmdline/initramfs/DTB — the
+  poison is hardware/firmware state accumulated over many crash cycles
+  (warm resets don't fully clear ADSP/RPMh/UFS/TZ/display state).
+- Remedy: full cold `adb reboot` (fresh bootloader power cycle; confirmed
+  uptime reset). Payload files survived the reboot intact. Next: re-root,
+  re-push NAND rw, attempt on pristine state.
+- Preflight 1+3 notes: transition machinery healthy (freeze/GPU/syncboss/
+  CPU-offline all rc=0); preflight_only REQUIRES execute=1 (silent EINVAL
+  otherwise — gotcha documented in loader.c line ~1041).

@@ -5,6 +5,7 @@
 # here, rather than trying to list every large directory to exclude.
 /*
 !/quest-kexec/
+!/installer/
 !/NOTES.md
 !/README.md
 !/drm-test/
@@ -43,3 +44,9 @@ Module.symvers
 /drm-test/regdump/target/
 /drm-test/regdump/regon_target/
 /drm-test/regdump/pclkfix_target/
+
+# Installer build outputs (track source only).
+/installer/.gradle/
+/installer/build/
+/installer/app/build/
+/installer/local.properties

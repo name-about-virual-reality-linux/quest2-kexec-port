@@ -2913,3 +2913,10 @@ and individually verified, live kexec mount test still open.
 - 8/8 CPUs online (Cortex-A77 Kryo up to 2.84 GHz), 5.6GB free RAM.
 - DRM nodes (`/dev/dri/card0` and `/dev/dri/renderD128`) initialized and present.
 - Milestone achieved: Persistent, decrypted, writable Arch Linux distro running natively on Meta Quest 2 NAND!
+- `fastfetch` deployed to `/usr/bin/fastfetch` on NAND and verified:
+  - Host: Hollywood (DVT)
+  - Kernel: Linux 4.19.325-cip128-st12+
+  - CPU: kona (1+3+4) @ 2.84 GHz
+  - Memory: 149 MiB / 5.70 GiB
+  - Disk (/): 28.03 GiB / 52.69 GiB (53%) f2fs
+  - Battery: 11% [Charging]

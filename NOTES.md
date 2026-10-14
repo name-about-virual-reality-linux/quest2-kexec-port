@@ -2904,3 +2904,12 @@ and individually verified, live kexec mount test still open.
   4. Fixes SSH permissions and starts `sshd`.
   5. Runs `/etc/rc.local` if present, then sleeps reaping zombie children.
   6. Initramfs switches root via `exec switch_root /newroot /sbin/qkx-init`.
+
+### VICTORY: Arch Linux ARM Booted on Quest 2 NAND (UFS `/dev/sda9`) via SSH!
+- `qkx-init` executed successfully as PID 1 post-switch.
+- Full `/dev/dm-0` (53GB decrypted userdata partition) mounted `rw` at `/` with 25GB free.
+- OpenSSH daemon (`sshd`) started and verified working over `10.42.0.2:22`.
+- Direct passwordless SSH access via host public key (`root@10.42.0.2`).
+- 8/8 CPUs online (Cortex-A77 Kryo up to 2.84 GHz), 5.6GB free RAM.
+- DRM nodes (`/dev/dri/card0` and `/dev/dri/renderD128`) initialized and present.
+- Milestone achieved: Persistent, decrypted, writable Arch Linux distro running natively on Meta Quest 2 NAND!

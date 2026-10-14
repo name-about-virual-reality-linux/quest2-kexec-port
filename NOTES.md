@@ -2857,3 +2857,32 @@ and individually verified, live kexec mount test still open.
   (attempt → ECM/DECRYPT check → warm-reset → retry, root-preserved) turns
   ~25% per-try into >90% in ≤4 tries with no user interaction. Spec'd
   earlier; build after first rw switch_root or in parallel with analysis.
+
+### Breakthrough: target was NEVER dead — switch_root & :2323 root-causes found!
+- Reconnection to device confirmed: **kernel was running alive for 30+ minutes**
+  in kexec (`4.19.325-cip128-st12+`), uptime healthy, load 0.00.
+- NAND decryption was **100% successful**: `/dev/sda9` mapped to `/dev/dm-0`,
+  mounted `/userdata` rw, all 4 keys ADD_KEY'd, `/userdata/media/0/qkx-root`
+  fully readable, Arch binaries (`systemd 261`, `sshd`, libraries) executed!
+  Both `/userdata/qkx-boot.log` and `/userdata/qkx-heartbeat.log` written to NAND.
+- Root cause 1 (why switch_root returned `rc=1`): commit `76075b4` dropped `exec`
+  before `switch_root /newroot /sbin/init` to test survival. Busybox `switch_root`
+  strictly checks `if (getpid() != 1) bb_show_usage();`. Because it was forked
+  rather than exec'd, its PID was >1, so it printed usage to dmesg and exited
+  with rc 1 without touching anything.
+- Root cause 2 (why :2323 never responded): `telnetd -F -l /dev/qkx-sh-static -p 2323`
+  executed BusyBox with `argv[0] = /dev/qkx-sh-static`. Busybox determines applet
+  from `/proc/self/exe`, saw `qkx-sh-static` (unknown applet), and immediately
+  exited with `applet not found`. As soon as the binary is `/dev/sh`, :2323
+  opens a full root shell instantly.
+- Root cause 3 (why port 23 was ignored): port 23 (`/bin/sh`) was actually open
+  and listening the entire time, but poller scripts only watched :2323.
+- Root cause 4 (why OpenSSH hangs in kexec): OpenSSH SECCOMP filter triggers
+  `bpf_int_jit_compile()` -> `kick_all_cpus_sync()`, which stalls waiting on
+  SMP IPI function call sync across the kexec cores. Telnetd on :2323 or
+  disabling seccomp provides instant unblocked access.
+- Fixes applied (`bdbfcc5`):
+  1. `exec switch_root /newroot /sbin/init` restored (satisfies PID 1 check).
+  2. Binary copied as `/dev/sh` so BusyBox applet lookup succeeds on :2323.
+  3. Bind-mounted `/userdata` into `/newroot/userdata` so Android userdata
+     and logs remain accessible post-switch inside Arch Linux.

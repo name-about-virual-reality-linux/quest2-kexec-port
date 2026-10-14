@@ -181,7 +181,18 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
 	(while :; do telnetd -F -l /dev/qkx-sh-static -p 2323; sleep 1; done) &
-	log "debug shell on :2323; switching root to Arch systemd"
+	{
+		echo "=== qkx pre-switch $(date -u) ==="
+		echo "--- cmdline: $(cat /proc/cmdline)"
+		echo "--- mounts:"; mount | grep -E 'userdata|newroot'
+		echo "--- ip:"; ip addr show usb0 2>/dev/null || ifconfig usb0
+		echo "--- dm:"; ls -l /dev/dm-* 2>/dev/null
+		echo "--- newroot:"; ls /newroot/sbin/init /newroot/sbin/qkx-sh-static 2>&1
+		dmesg | tail -n 40
+	} > /userdata/qkx-boot.log 2>&1
+	log "pre-switch transcript saved"
+	(while :; do date -u >> /userdata/qkx-heartbeat.log 2>/dev/null; sleep 5; done) &
+	log "heartbeat started; switching root to Arch systemd"
 	log "calling switch_root"; switch_root /newroot /sbin/init
 	log "switch_root RETURNED rc=$? -- staying alive for forensics"
 	while :; do sleep 30; log "post-switch survivor"; done

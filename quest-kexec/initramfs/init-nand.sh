@@ -185,21 +185,76 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	log "static cp rc=$?; newroot sbin: $(ls -l /newroot/sbin/qkx-sh-static 2>&1)"
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
-	(while :; do telnetd -F -l /dev/sh -p 2323; sleep 1; done) &
+	# Create 4.19-compatible PID 1 init script for Arch Linux
+	# (bypasses systemd v261 STATX_MNT_ID / EUNATCH failure on Linux 4.19)
+	cat << 'EOINIT' > /newroot/sbin/qkx-init
+#!/bin/sh
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export HOME=/root
+export TERM=vt100
+
+echo "=== QKX ARCH INIT (PID 1) STARTING ===" > /dev/kmsg
+
+# Mount standard pseudo-filesystems
+[ -d /proc/1 ] || mount -t proc proc /proc
+[ -d /sys/kernel ] || mount -t sysfs sysfs /sys
+[ -e /dev/console ] || mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /dev/shm /run /tmp /userdata
+mount -t devpts devpts /dev/pts 2>/dev/null
+mount -t tmpfs tmpfs /dev/shm 2>/dev/null
+mount -t tmpfs tmpfs /run 2>/dev/null
+mount -t tmpfs tmpfs /tmp 2>/dev/null
+
+# Configure network on usb0
+ifconfig lo 127.0.0.1 up 2>/dev/null
+ifconfig usb0 10.42.0.2 netmask 255.255.255.0 up 2>/dev/null
+ip addr add 10.42.0.2/24 dev usb0 2>/dev/null
+ip link set usb0 up 2>/dev/null
+
+echo "qkx-init: network up (10.42.0.2 on usb0)" > /dev/kmsg
+
+# Start persistent telnet debug shells in Arch root
+(while :; do (telnetd -F -l /bin/sh -p 23 || /dev/sh -c 'telnetd -F -l /dev/sh -p 23'); sleep 1; done) &
+(while :; do (telnetd -F -l /bin/sh -p 2323 || /dev/sh -c 'telnetd -F -l /dev/sh -p 2323'); sleep 1; done) &
+
+echo "qkx-init: shells active on :23 and :2323" > /dev/kmsg
+
+# Fix SSH permissions and start sshd if installed
+if [ -x /usr/bin/sshd ]; then
+	chown 0:0 /usr/share/empty.sshd 2>/dev/null
+	chmod 755 /usr/share/empty.sshd 2>/dev/null
+	chown -R 0:0 /etc/ssh 2>/dev/null
+	chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null
+	/usr/bin/sshd 2>/dev/null &
+fi
+
+echo "=== ARCH LINUX READY (10.42.0.2) ===" > /dev/kmsg
+
+# Run user startup script if present
+[ -x /etc/rc.local ] && /etc/rc.local &
+
+# Reap zombie children and keep PID 1 alive
+while :; do
+	sleep 3600
+done
+EOINIT
+	chmod 755 /newroot/sbin/qkx-init
+
 	{
 		echo "=== qkx pre-switch $(date -u) ==="
 		echo "--- cmdline: $(cat /proc/cmdline)"
 		echo "--- mounts:"; mount | grep -E 'userdata|newroot'
 		echo "--- ip:"; ip addr show usb0 2>/dev/null || ifconfig usb0
 		echo "--- dm:"; ls -l /dev/dm-* 2>/dev/null
-		echo "--- newroot:"; ls /newroot/sbin/init /newroot/sbin/qkx-sh-static 2>&1
+		echo "--- newroot:"; ls /newroot/sbin/init /newroot/sbin/qkx-init /newroot/sbin/qkx-sh-static 2>&1
 		dmesg | tail -n 40
 	} > /userdata/qkx-boot.log 2>&1
 	log "pre-switch transcript saved"
 	(while :; do date -u >> /userdata/qkx-heartbeat.log 2>/dev/null; sleep 5; done) &
-	log "heartbeat started; switching root to Arch systemd"
-	# switch_root requires PID 1; must be exec'd from the PID 1 shell
-	log "executing switch_root"; exec switch_root /newroot /sbin/init
+	log "heartbeat started; stopping pre-switch telnetd"
+	killall telnetd 2>/dev/null || true
+	log "executing switch_root to /sbin/qkx-init"
+	exec switch_root /newroot /sbin/qkx-init
 	log "switch_root EXEC FAILED rc=$?"
 	while :; do sleep 30; log "post-switch survivor"; done
 fi

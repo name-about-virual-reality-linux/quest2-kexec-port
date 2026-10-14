@@ -7,13 +7,14 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import com.google.android.material.color.MaterialColors
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Thick rounded split bar: Arch fill grows from the left, Horizon fill
- * shrinks from the right, divided by a draggable center line that starts
- * in the middle. Drag left = less Arch / more Horizon, and vice versa.
+ * Material3 split bar: thick rounded track, Arch fill from the left in
+ * primary, Horizon fill from the right in secondary-container, divided by
+ * a draggable thumb knob. Starts dead center.
  */
 class SplitBar @JvmOverloads constructor(
     context: Context,
@@ -27,17 +28,30 @@ class SplitBar @JvmOverloads constructor(
     var maxFraction: Float = 0.95f
     var onSplit: ((Float) -> Unit)? = null
 
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E2E35.toInt() }
-    private val archPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF7DD3FC.toInt() }
-    private val horizonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFC4B5FD.toInt() }
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val archPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val horizonPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFFFFF.toInt()
-        strokeWidth = 8f
         strokeCap = Paint.Cap.ROUND
     }
+    private val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val knobShadow = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val rect = RectF()
     private var dragging = false
+    private var colorsInit = false
+
+    private fun initColors() {
+        if (colorsInit) return
+        colorsInit = true
+        val def = 0xFF2E2E35.toInt()
+        trackPaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurfaceContainerHighest, def)
+        archPaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, 0xFF7DD3FC.toInt())
+        horizonPaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorSecondaryContainer, 0xFFC4B5FD.toInt())
+        linePaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnPrimaryContainer, 0xFFFFFFFF.toInt())
+        knobPaint.color = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimaryContainer, 0xFFFFFFFF.toInt())
+        knobShadow.color = 0x40000000
+    }
 
     fun setFractionClamped(f: Float) {
         val nf = min(maxFraction, max(minFraction, f))
@@ -49,7 +63,7 @@ class SplitBar @JvmOverloads constructor(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val h = (56 * resources.displayMetrics.density).toInt()
+        val h = (64 * resources.displayMetrics.density).toInt()
         setMeasuredDimension(
             MeasureSpec.getSize(widthMeasureSpec),
             resolveSize(h, heightMeasureSpec),
@@ -57,31 +71,41 @@ class SplitBar @JvmOverloads constructor(
     }
 
     override fun onDraw(canvas: Canvas) {
+        initColors()
         val w = width.toFloat()
         val h = height.toFloat()
-        val r = h / 2f // fully rounded ends
+        val trackH = h * 0.45f
+        val top = (h - trackH) / 2f
+        val r = trackH / 2f
         // Base track.
-        rect.set(0f, 0f, w, h)
+        rect.set(0f, top, w, top + trackH)
         canvas.drawRoundRect(rect, r, r, trackPaint)
         val splitX = w * fraction
         // Arch fill (left), squared inner edge at the divider.
         if (splitX > 0) {
             canvas.save()
-            canvas.clipRect(0f, 0f, splitX, h)
-            rect.set(0f, 0f, w, h)
+            canvas.clipRect(0f, top, splitX, top + trackH)
+            rect.set(0f, top, w, top + trackH)
             canvas.drawRoundRect(rect, r, r, archPaint)
             canvas.restore()
         }
         // Horizon fill (right).
         if (splitX < w) {
             canvas.save()
-            canvas.clipRect(splitX, 0f, w, h)
-            rect.set(0f, 0f, w, h)
+            canvas.clipRect(splitX, top, w, top + trackH)
+            rect.set(0f, top, w, top + trackH)
             canvas.drawRoundRect(rect, r, r, horizonPaint)
             canvas.restore()
         }
-        // Divider line.
-        canvas.drawLine(splitX, 8f, splitX, h - 8f, linePaint)
+        val cy = h / 2f
+        // Thin divider line through the track.
+        linePaint.strokeWidth = 6f
+        canvas.drawLine(splitX, top + 2f, splitX, top + trackH - 2f, linePaint)
+        // Thumb knob with soft shadow.
+        val knobR = h * 0.30f
+        canvas.drawCircle(splitX, cy + 3f, knobR, knobShadow)
+        canvas.drawCircle(splitX, cy, knobR, knobPaint)
+        canvas.drawCircle(splitX, cy, knobR * 0.45f, linePaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

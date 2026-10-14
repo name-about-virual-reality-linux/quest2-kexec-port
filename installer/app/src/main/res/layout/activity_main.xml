@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121214"
     android:padding="24dp">
 
     <LinearLayout
@@ -14,29 +14,29 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/app_name"
-            android:textColor="#FFFFFF"
-            android:textSize="28sp"
-            android:textStyle="bold" />
+            android:textAppearance="?attr/textAppearanceHeadlineMedium" />
 
-        <TextView
-            android:id="@+id/status"
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:background="@drawable/card"
-            android:padding="16dp"
-            android:text="…"
-            android:textColor="#E8E8EC"
-            android:textSize="16sp" />
+            app:cardCornerRadius="28dp">
+
+            <TextView
+                android:id="@+id/status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="20dp"
+                android:text="…"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+        </com.google.android.material.card.MaterialCardView>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
             android:text="Storage split"
-            android:textColor="#FFFFFF"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:textAppearance="?attr/textAppearanceTitleLarge" />
 
         <TextView
             android:id="@+id/archSize"
@@ -44,8 +44,8 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Arch: …"
-            android:textColor="#7DD3FC"
-            android:textSize="18sp" />
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="?attr/colorPrimary" />
 
         <com.qkx.installer.SplitBar
             android:id="@+id/split"
@@ -57,42 +57,48 @@
             android:id="@+id/baseSize"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="12dp"
             android:text="Base storage: …"
-            android:textColor="#E8E8EC"
-            android:textSize="16sp" />
+            android:textAppearance="?attr/textAppearanceBodyLarge" />
 
         <TextView
             android:id="@+id/horizonSize"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Horizon OS: …"
-            android:textColor="#C4B5FD"
-            android:textSize="18sp" />
+            android:textAppearance="?attr/textAppearanceBodyLarge"
+            android:textColor="?attr/colorSecondary" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/install"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="Install Arch" />
+            android:text="Install Arch"
+            app:cornerRadius="20dp" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/boot"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="Boot Arch" />
+            android:text="Boot Arch"
+            app:cornerRadius="20dp"
+            style="@style/Widget.Material3.Button.TonalButton" />
 
-        <TextView
-            android:id="@+id/log"
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:background="@drawable/card"
-            android:padding="12dp"
-            android:textColor="#A1A1AA"
-            android:textSize="13sp"
-            android:typeface="monospace" />
+            app:cardCornerRadius="28dp">
+
+            <TextView
+                android:id="@+id/log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="16dp"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:typeface="monospace" />
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 </ScrollView>

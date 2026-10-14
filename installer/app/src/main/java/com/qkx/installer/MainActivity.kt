@@ -1,10 +1,11 @@
 package com.qkx.installer
 
 import android.os.Bundle
+import android.os.StatFs
 import android.widget.Button
-import android.widget.SeekBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.color.DynamicColors
 import kotlin.concurrent.thread
 import kotlin.math.roundToLong
 
@@ -26,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private var dataTotalBytes: Long = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        DynamicColors.applyToActivityIfAvailable(this)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -78,16 +80,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatus() {
+        // Base storage without root: app-private StatFs (same /data volume).
+        try {
+            val sf = StatFs(filesDir.path)
+            dataTotalBytes = sf.blockCountLong * sf.blockSizeLong
+            runOnUiThread { renderSizes() }
+        } catch (_: Exception) {
+        }
         thread {
             val root = RootShell.hasRoot()
-            dataTotalBytes = RootShell.run("stat -f -c %b\\ %S /data").let {
-                val p = it.out.trim().split(Regex("\\s+"))
-                if (p.size >= 2) (p[0].toLongOrNull() ?: 0) * (p[1].toLongOrNull() ?: 0) else 0
+            // Refine with the exact userdata total when root is available.
+            val st = RootShell.run("stat -f -c %b\\ %S /data")
+            val p = st.out.trim().split(Regex("\\s+"))
+            if (p.size >= 2) {
+                val total = (p[0].toLongOrNull() ?: 0) * (p[1].toLongOrNull() ?: 0)
+                if (total > 0) dataTotalBytes = total
             }
             val installed = QkxOps.loopImagePresent()
             runOnUiThread {
                 statusView.text = when {
-                    !root -> "No root — needs Magisk"
+                    !root -> "No root — needs Magisk (sizes still live)"
                     installed -> "Ready — Arch image present"
                     else -> "Root OK — pick a size and install"
                 }

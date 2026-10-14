@@ -2886,3 +2886,21 @@ and individually verified, live kexec mount test still open.
   2. Binary copied as `/dev/sh` so BusyBox applet lookup succeeds on :2323.
   3. Bind-mounted `/userdata` into `/newroot/userdata` so Android userdata
      and logs remain accessible post-switch inside Arch Linux.
+
+### Systemd v261 EUNATCH Freeze on Kernel 4.19 & `/sbin/qkx-init` Fix
+- Systemd v261 successfully started as PID 1, but immediately froze with:
+  `systemd[1]: Failed to determine whether /proc is a mount point: Protocol driver not attached`
+  `systemd[1]: Freezing execution.`
+- Root cause: modern systemd (v256+) uses `statx(..., STATX_MNT_ID)` to determine
+  mount points. `STATX_MNT_ID` was only introduced in Linux **5.8**. On Linux
+  **4.19**, `statx` does not return the mount ID, causing systemd's
+  `path_is_mount_point()` to return `-EUNATCH` (errno 49, "Protocol driver not attached").
+  Systemd considers early API mount checks fatal and calls `freeze_or_exit()`.
+- Solution (`e5c3797`): created 4.19-compatible `/sbin/qkx-init` on the fly
+  in the Arch root before `switch_root`:
+  1. Mounts `/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`, `/run`, `/tmp`.
+  2. Configures `usb0` static IP `10.42.0.2/24`.
+  3. Spawns persistent telnet shells on port 23 and 2323 directly inside Arch root.
+  4. Fixes SSH permissions and starts `sshd`.
+  5. Runs `/etc/rc.local` if present, then sleeps reaping zombie children.
+  6. Initramfs switches root via `exec switch_root /newroot /sbin/qkx-init`.

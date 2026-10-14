@@ -2737,3 +2737,21 @@ and individually verified, live kexec mount test still open.
   `nand-metadata-key.txt`, mounts the MAPPED device, then kadds file keys.
   `nand-serve-keys.sh` serves the metadata hex too. Rebuilt initramfs
   (2091810 B). Next: fresh payload + attempt #5 (needs re-root).
+
+### Attempt #6 (same dm payload): ✔ DECRYPT OK — UFS rootfs path proven
+- Roulette passed this time (same Image/initramfs as #5: early-boot hangs
+  are state-dependent, GENI config irrelevant — #4 booted GENI-on, #5 hung
+  GENI-off, #6 booted GENI-off).
+- Target log: `sda9 present` → dm mapping created → **`/dev/dm-0 mounted
+  ro` → `added 4 key(s)` → `DECRYPT OK: qkx-root readable` →
+  `os-release present`**, `nand_ok=1 mode=ro`. Both key files fetched
+  (server log 200s from 10.42.0.2). Live shell confirms: qkx-root has
+  os-release + executable sbin/init, and /userdata shows real Android
+  content (app, app-asec, ...) — full userdata decrypt, not just the CE
+  path. device-DE + DE-user0 + CE-user0 (+fb2a) all ADD_KEY'd.
+- This is the screenshot thesis working end to end: keys grabbed while
+  Android booted (kextract + metadata unwrap), data partition mounted
+  from the kexec'd kernel via recreated dm-default-key + fscrypt keys.
+- Next: `qkx_nand=rw` payload → remount rw → switch_root to Arch systemd
+  on UFS. Needs return-to-Android + re-kexec (can't switch_root from the
+  ro shell — not PID 1).

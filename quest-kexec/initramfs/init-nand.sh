@@ -171,14 +171,16 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	mount -t tmpfs tmpfs /newroot/tmp
 	mount -t tmpfs tmpfs /newroot/run 2>/dev/null
 	# Debug shell that survives switch_root: static binary copied into the
-	# new root + telnetd bound to its absolute post-switch path. Processes
+	# new root + telnetd bound to absolute paths valid in BOTH roots (/dev
+	# is a shared devtmpfs bind, always writable). Processes
 	# survive switch_root (old root is wiped, but open fds stay), so :2323
 	# stays reachable even if Arch systemd never brings up networking.
-	cp /sbin/qkx-sh-static /newroot/sbin/qkx-sh-static
+	cp /sbin/qkx-sh-static /newroot/sbin/qkx-sh-static 2>/dev/null
+	cp /sbin/qkx-sh-static /dev/qkx-sh-static
 	log "static cp rc=$?; newroot sbin: $(ls -l /newroot/sbin/qkx-sh-static 2>&1)"
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
-	(while :; do telnetd -F -l /sbin/qkx-sh-static -p 2323; sleep 1; done) &
+	(while :; do telnetd -F -l /dev/qkx-sh-static -p 2323; sleep 1; done) &
 	log "debug shell on :2323; switching root to Arch systemd"
 	exec switch_root /newroot /sbin/init
 fi

@@ -2834,3 +2834,26 @@ and individually verified, live kexec mount test still open.
 - Preflight 1+3 notes: transition machinery healthy (freeze/GPU/syncboss/
   CPU-offline all rc=0); preflight_only REQUIRES execute=1 (silent EINVAL
   otherwise — gotcha documented in loader.c line ~1041).
+
+### Night tally + pause: 2/12 shells, roulette mechanism still open
+- Attempts since #6 (all rw except where noted): #7 hang, #8 early death,
+  #9 pre-init death, #10 (blacklist, recovery=1) dark, #11 (screen off) dark,
+  Oct-14: #12 (pre-init, bark reset), #13 (pre-init? pstore had full
+  initcall_debug trace, same 30s deferred flush stall), #14 (Oct-12 payload
+  also fails — build exonerated), #15 (pristine cold boot) pre-init death,
+  #16 (screen on) pre-init death, #17 (same) pre-init death.
+- pstore when bark-preserved is now routine; power-button resets wipe it
+  (lesson: never power-button if pstore matters — but dark-forever leaves
+  no choice; prefer 6-min bark wait).
+- Preflight 1+3 pass (transition healthy incl. CPU offline/marshal).
+  Blacklist (41 camera+syncboss) didn't change the signature. Screen
+  on/off, strip/no-strip, GENI on/off, pristine/aged boot all fail
+  interchangeably. No discriminator found yet.
+- NEXT (device-free analysis first): diff initcall sequences across the
+  saved hang pstores (build/ramoops-nand*.txt) for a common last-driver;
+  on next SUCCESS shell, immediately dump live pstore+dmesg for the good
+  sequence to diff against. Then blacklist precisely or fix the supplier.
+- PRODUCT answer regardless: installer app with automatic retry loop
+  (attempt → ECM/DECRYPT check → warm-reset → retry, root-preserved) turns
+  ~25% per-try into >90% in ≤4 tries with no user interaction. Spec'd
+  earlier; build after first rw switch_root or in parallel with analysis.

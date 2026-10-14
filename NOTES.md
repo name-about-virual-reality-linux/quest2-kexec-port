@@ -2799,3 +2799,15 @@ and individually verified, live kexec mount test still open.
   userdata decrypt, chroot Arch execution. Remaining: ONE lucky rw boot
   through to switch_root (observability pre-installed: :2323 debug shell,
   Arch sshd+usb0 static IP).
+
+### Roulette counter-plan: initcall_debug + payload build script
+- Tally ro 2/6, rw 0/3 — all failures pre-init (msm_bus panic once,
+  deferred-probe spins otherwise). No DTB/payload defect (ro/rw DTBs differ
+  only in bootargs+initrd-end). Failures are kexec hardware-state roulette.
+- New: `tools/build-payload-nand.sh` (single source for the NAND cmdline;
+  no more hand-rolled prepare.py invocations drifting). Cmdline now adds
+  `initcall_debug ignore_loglevel` — next pstore will NAME the hanging
+  initcall instead of another anonymous spin, then it gets blacklisted in
+  the NAND cmdline only (display kernel untouched).
+- Camera initcall names mapped for future blacklisting: cam_cci_init_module,
+  cam_cci_late_init, cam_isp_dev_init_module (techpack/camera).

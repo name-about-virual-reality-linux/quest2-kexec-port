@@ -126,7 +126,7 @@ if [ -e /sys/block/sda/sda9 ]; then
 			log "dm mapping failed"
 		fi
 		rm -f "$META"
-		if [ -n "$DMDEV" ] && mount -t f2fs -o ro "$DMDEV" /userdata; then
+		if [ -n "$DMDEV" ] && mount -t f2fs -o ro,inlinecrypt "$DMDEV" /userdata; then
 			log "$DMDEV mounted ro"
 			while read DESC RAW _; do
 				case "$DESC" in ""|\#*) continue;; esac

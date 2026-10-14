@@ -2755,3 +2755,22 @@ and individually verified, live kexec mount test still open.
 - Next: `qkx_nand=rw` payload → remount rw → switch_root to Arch systemd
   on UFS. Needs return-to-Android + re-kexec (can't switch_root from the
   ro shell — not PID 1).
+
+### Attempt #6 live debugging: filenames OK, contents needed `inlinecrypt`
+- chroot first failed (`Exec format error`): /bin/sh read as random bytes.
+  os-release too. Filenames decrypted (CTS software) but file CONTENTS
+  (mode 127 PRIVATE = inlinecrypt) did not — even though dm-default-key
+  metadata decrypted fine through the same blk-crypto layer.
+- Root cause: our mount lacked the `inlinecrypt` option (stock mounts
+  with it). Without the flag, f2fs/fscrypt doesn't route contents through
+  inline crypto. Fixed LIVE: umount binds+userdata, `mount -t f2fs -o
+  ro,inlinecrypt /dev/dm-0`, re-fetch keys (new mount = empty keyring),
+  re-ADD all 4 → os-release reads `NAME="Arch Linux` plaintext.
+- chroot works: `uname` = `Linux (none) 4.19.325-cip128-st12+ #42
+  aarch64`, `bash 5.3.15 (aarch64)`. Genuine Arch ARM64 on UFS executing
+  under the kexec kernel — screenshot thesis complete at shell level.
+- Baked in: init-nand.sh mounts with `ro,inlinecrypt`; initramfs rebuilt;
+  BOTH `build/out-payload-nand/` (ro) and `build/out-payload-nand-rw/`
+  (rw) staged. Next: rw boot → switch_root to Arch systemd (needs
+  return-to-Android + re-kexec; observability after switch_root is the
+  open question — no telnet/systemd-network in Arch by default).

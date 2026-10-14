@@ -2685,3 +2685,27 @@ and individually verified, live kexec mount test still open.
   `build/out-target/Image-nand-geni` (gitignored) for bisection reference.
   Fresh `build/out-payload-nand/` prepared with `qkx_nand=ro`.
   Awaiting re-root for attempt #4.
+
+### Attempt #4 (GENI-fix kernel `3f4410fb`): BOOTS, ECM works, UFS reads wrong
+- Target booted clean past initcalls (no msm_bus panic, no deferred hang —
+  GENI revert fixed the boot). ECM up (ping 0.7ms), fetched `nand-keys.txt`
+  from Mac (server log `GET 200` from 10.42.0.2), `sda: sda1..sda9` probed.
+- `mount -t f2fs -o ro /dev/sda9` FAILS: `Magic Mismatch, valid(0xf2f52010)
+  - read(0xd57d911f)` (both superblocks). Keys never got tried — block
+  content is wrong before FBE matters.
+- Read forensics (live target shell): sda9 size OK (56575275008 B ≈ 54G),
+  sda9@0x400 = deterministic random; re-mount after `drop_caches` gives
+  BYTE-IDENTICAL garbage (stable-wrong, not flaky transport). sda7 = zeros
+  (matches Android), sda8@0x400 = structured non-random, but sda LBA1 (GPT
+  header) + LBA2 (entries) = ALL ZEROS — yet the kernel parsed 9 partitions
+  at probe. No UFS/SCSI errors in dmesg. LUN geometry sane (sda 63GB = only
+  big LUN; `sde` 574MB; no reorder suspect).
+- Working theories (need Android ground truth): (a) partitions came from
+  DT, not a live GPT read (stale/shifted map → wrong region, stable
+  garbage); (b) UFS ICE decrypting with stale keyslots (deterministic
+  garbage on encrypted regions; GPT zeros unexplained). Next: after
+  re-root, dump Android's sda9@0x400 + LBA1 + `/sys/block/sda/sda9/start` +
+  `dmsetup table dm-49`, compare byte-for-byte with tonight's reads.
+- Warm-reset via `echo r > /proc/qkx_bootdone` (~12s back to Android).
+  Root lost again (expected). Evidence: server log + this entry; no pstore
+  needed (no crash — init ran to the telnet loop).

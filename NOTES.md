@@ -2623,3 +2623,36 @@ and individually verified, live kexec mount test still open.
   with no pstore). Retry plan after re-root: pull pstore, confirm module
   table clean (fresh boot, so no ENOEXEC expected), re-push + sync +
   re-verify (page-cache revert rule), retry insmod once or twice.
+
+### Live NAND ro-proof attempt #2: same early failure, root lost again
+- Same verified payload, re-stripped, `insmod` again (module absent from
+  lsmod beforehand, so no ENOEXEC concern). Same outcome: no ping, no key
+  fetch (both HTTP hits were localhost self-checks), warm reset to stock,
+  root lost again.
+- pstore from attempt #1 (pulled after re-root) is the real find: the
+  target (kernel #41, docker build Oct-14 01:32 UTC) panics at ~10.4s in
+  `do_initcalls`, BEFORE any initramfs init runs:
+  `msm_bus_debugfs_init+0x348 → debugfs_create_file → start_creating →
+  strlen` on garbage (`x0=0x42180`, "user address but active_mm is
+  swapper") → `Kernel panic - not syncing: Attempted to kill init!`
+  Full log in `/tmp/ramoops-nand1.txt` (Mac, not committed).
+- Cmdline red herring resolved: the log's `Kernel command line` shows
+  stock args only because console-ramoops truncates the ~1425-char line
+  mid-word (`androidboot.seri...`); the staged DTB was verified to contain
+  `qkx_nand=ro rdinit=/init ...` via both raw offset search and `fdtget`.
+  Loader passes DTB through untouched (no bootargs code in loader.c).
+- Prime suspect is kernel-build delta, not the NAND userspace: Oct-09
+  volume .config had `# CONFIG_BLK_DEV_NBD is not set` +
+  `# CONFIG_F2FS_FS_ENCRYPTION is not set` (but DEBUG_FS/DYNAMIC_DEBUG
+  already y — same as now). Current build adds at least NBD +
+  F2FS_ENCRYPTION; full .config diff vs the last known-good boot kernel
+  (Oct-12 working-video Image, 26617872 B) not yet done. The crash site
+  (bus NoC debugfs with a garbage node name) also fits the documented
+  stale-RPMh/bus-state flakiness class (`ldoa15 rpmh_write rc=-110`
+  timeout in the same log), so state-dependence isn't ruled out — but two
+  identical failures in a row points at the build first.
+- Next (needs re-root + approval): (a) pull attempt-#2 pstore, confirm
+  same crash; (b) sanity-boot the Oct-12 known-good Image+initramfs to
+  prove the kexec path/device-state is healthy (no NAND decrypt expected
+  — old kernel lacks F2FS_ENCRYPTION — shell-only signal); (c) rebuild
+  target with minimal delta (F2FS_ENCRYPTION only) and bisect if needed.

@@ -2656,3 +2656,26 @@ and individually verified, live kexec mount test still open.
   prove the kexec path/device-state is healthy (no NAND decrypt expected
   — old kernel lacks F2FS_ENCRYPTION — shell-only signal); (c) rebuild
   target with minimal delta (F2FS_ENCRYPTION only) and bisect if needed.
+
+### NAND attempts #1-3: GENI regression found via .config archaeology
+- Attempt #2 pstore (pulled after re-root): DIFFERENT crash than #1 —
+  target reached 40s, UFS probed (`sda: sda1..sda9` visible!), but PID 1
+  stuck in `deferred_probe_initcall → flush_work`, RCU stalls from 31s,
+  QKX watchdog reset at 40s. kworker spinning in `async_run_entry_fn`.
+  The GENI stack was all active (qupv3 SE probes, spi_geni completed,
+  syncboss/cm710x probing) — the exact Oct-10 hang signature.
+- Attempt #3 (identical payload): same no-ECM outcome; pstore not yet
+  pulled (root lost again). 0/3 → stopped retrying, fixed the build.
+- `.config` diff across volume backups nails it: Oct-09 (known-good era)
+  had `SPI_QCOM_GENI`/`QCOM_GENI_SE` OFF; the Oct-12/13 tracking work
+  turned both ON (for the syncboss/IMU narrow re-enable) and never
+  reverted. Oct-10 NOTES disabled exactly these two for the GENI-SMMU
+  deferred-probe hang. Full functional delta was small: GENI x2 (the
+  bug), NBD + F2FS_ENCRYPTION (wanted), SENSORS_SSC + SYNCBOSS_DEBUG +
+  DIRECTCHANNEL (tracking; DIRECTCHANNEL already back off).
+- Fix applied in `qkx-target-out/.config` via `scripts/config --disable
+  SPI_QCOM_GENI --disable QCOM_GENI_SE` + olddefconfig (verified both
+  `is not set`; ION/SERIAL_GENI/I2C_GENI confirmed still off;
+  F2FS_ENCRYPTION + NBD kept; SENSORS_SSC kept as suspect #2 if the hang
+  persists). Target Image rebuilding in docker; will stage as new
+  Image-nand + fresh payload and re-attempt (needs re-root).

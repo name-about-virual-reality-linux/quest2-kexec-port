@@ -2785,3 +2785,17 @@ and individually verified, live kexec mount test still open.
   branch copies it to /newroot/sbin + starts telnetd :2323 on its absolute
   post-switch path before `exec switch_root` (processes survive the switch,
   old root is wiped — :2323 stays reachable regardless of systemd).
+
+### rw attempts #7+#8: boot roulette continues, root lost again
+- #7 pstore (same 40s deferred_probe flush_work hang as #2, kernel #42).
+  rw vs ro irrelevant — death is pre-init.
+- #8 died even earlier (no key fetch at all); pstore unrecoverable (this
+  reset dropped root — cold reboot, unlike the warm resets that kept it).
+- ro/rw DTBs diffed structurally: only bootargs (ro/rw) + initrd-end
+  (initramfs sizes) differ. Payloads are sound; failures are kexec-state
+  roulette (running tally tonight: 5 jumps → 2 shells (#4 ro, #6 ro+chroot)).
+- Tally of what's proven: kernel boots, ECM, key fetch (both files),
+  dm-default-key mapping, f2fs mount (inlinecrypt), 4×ADD_KEY, full
+  userdata decrypt, chroot Arch execution. Remaining: ONE lucky rw boot
+  through to switch_root (observability pre-installed: :2323 debug shell,
+  Arch sshd+usb0 static IP).

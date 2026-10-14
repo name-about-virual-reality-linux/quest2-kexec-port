@@ -2559,3 +2559,47 @@ Goal: mount encrypted userdata (sda9, 54G) from kexec kernel. Result:
   all present). Needs a target rebuild with F2FS_FS_ENCRYPTION=y
   before sda9 mount can decrypt. Device-side state restored: PIN
   cleared, guest users gone, 30G free on userdata.
+
+## 2026-10-13 (cont.): NAND path staged end to end, pending live kexec test
+
+Screenshot thesis ("grab the keys while Android is booted, mount data from
+the next kernel") is exactly this path; all host-side pieces are now built
+and individually verified, live kexec mount test still open.
+
+- Target kernel gap CLOSED: `qkx-target-out/.config` now has
+  `CONFIG_F2FS_FS_ENCRYPTION=y` (plus `UFS_CRYPTO=y`, `CRYPTO_QTI=y`,
+  `BLK_DEV_NBD=y`). `build/out-target/Image-nand` refreshed from the live
+  docker build (sha `ff273d85...`, same as `Image-nbd` — one kernel covers
+  both NAND and NBD paths now).
+- `quest-kexec/initramfs/init-nand.sh` rewritten: fetches multi-key
+  `nand-keys.txt` (`DESC RAW` per line) with fallback to legacy single-key
+  `nand-key.txt`; mounts sda9 ro, ADD_KEYs every key via `/bin/kadd`,
+  proves decrypt via `/userdata/media/0/qkx-root/bin/sh`; `qkx_nand=rw`
+  now bind-mounts dev/proc/sys + tmpfs tmp/run before
+  `switch_root /newroot /sbin/init` (previous version bound only the
+  rootfs, which switch_root would have choked on).
+- New tooling (all in `tools/`, committed): `build-initramfs-nand.sh`
+  (reproducible pack via `initramfs/build.py --extra kadd:bin/kadd`),
+  `nand-extract-keys.sh` (live `kextract.ko` -> dmesg scrape -> 0600 keys
+  file in /tmp, never in git), `nand-serve-keys.sh` (ECM HTTP on :8000,
+  serves both `nand-keys.txt` and legacy `nand-key.txt` derived from the
+  CE-user0 line).
+- Verified live tonight (read-only, no reboot): fresh extraction returns
+  the same 3 persistent raws as yesterday byte-for-byte (device-DE
+  `ab9b...`, DE-user0 `ecf4...`, CE-user0 `ff56...` — stable, no lock
+  change rotated them) plus a 4th live descriptor `fb2aea5de1ecf5a2`
+  (scope unidentified; not on any of /data /data/media* /data/misc
+  /data/system /data/data /data/user* — carried along harmlessly).
+  `kpolicy` confirms `/data/media/0` + `qkx-root` are both CE-user0
+  (v0, contents 127 PRIVATE/inlinecrypt, filenames 4 CTS), so the single
+  CE key unlocks the rootfs path; `kadd` re-ADD of the live CE key
+  returns ok. Staged rootfs is plain Arch ARM 2.0G at
+  `/data/media/0/qkx-root` (writable f2fs — solves the squashfs
+  read-only limitation).
+- Boot payload prepared (not booted): `build/out-payload-nand/` (gitignored)
+  via `tools/prepare.py` with `qkx_nand=ro` (safe default: prove decrypt,
+  stay in telnet shell). Test recipe: `nand-extract-keys.sh`,
+  `nand-serve-keys.sh`, push Image/initramfs/boot.dtb + protection-strip,
+  `insmod ... execute=1`, expect `DECRYPT OK` over telnet, then retry with
+  `qkx_nand=rw` for the UFS Arch switch_root. Device at 33% + Charging
+  (USB) at stage time.

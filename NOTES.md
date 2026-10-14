@@ -2603,3 +2603,23 @@ and individually verified, live kexec mount test still open.
   `insmod ... execute=1`, expect `DECRYPT OK` over telnet, then retry with
   `qkx_nand=rw` for the UFS Arch switch_root. Device at 33% + Charging
   (USB) at stage time.
+
+### Live NAND ro-proof attempt #1 (2026-10-13 eve): target did not come up
+- Pre-flight: payload + module sha256-verified both sides after `adb sync`
+  (Image `ff273d85...`, initramfs `254e9fbd...`, boot.dtb `c6ea2272...`,
+  ko `26ef219d...`), protection-strip applied, key server on :8000 serving
+  fresh-extracted 4-key file (extraction re-verified byte-identical to
+  yesterday). `uname -r` confirmed stock `g4b63ca9fd613`, slot `_a`.
+- `insmod ... execute=1 preserve_watchdog=1 watchdog_recovery=0
+  core_hang_control=2 flush_rpmh=1 suspend_syncboss=1 disconnect_qmp=0
+  phase_delay_ms=300` → adb dropped (rc 255), expected.
+- After 18s + retries: no adb, no ping on 10.42.0.2, NO key fetch on the
+  HTTP server (target never reached init-nand.sh's wget). ~1 min later adb
+  reappeared on stock Android (`uname` = stock, uptime 0) → early-target
+  crash → warm reset. Root lost (Magisk app present, daemon inactive —
+  same as the earlier hang-test reboot; needs app re-root).
+- NOT yet diagnosed (needs root for pstore/ramoops). Same shape as the
+  documented Oct-11 flakiness (new Image failing to come up repeatedly
+  with no pstore). Retry plan after re-root: pull pstore, confirm module
+  table clean (fresh boot, so no ENOEXEC expected), re-push + sync +
+  re-verify (page-cache revert rule), retry insmod once or twice.

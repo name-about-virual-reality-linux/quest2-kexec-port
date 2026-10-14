@@ -170,17 +170,22 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	mount --bind /sys /newroot/sys
 	mount -t tmpfs tmpfs /newroot/tmp
 	mount -t tmpfs tmpfs /newroot/run 2>/dev/null
+	# Keep userdata accessible inside Arch Linux at /userdata
+	mkdir -p /newroot/userdata
+	mount --bind /userdata /newroot/userdata 2>/dev/null
 	# Debug shell that survives switch_root: static binary copied into the
 	# new root + telnetd bound to absolute paths valid in BOTH roots (/dev
-	# is a shared devtmpfs bind, always writable). Processes
-	# survive switch_root (old root is wiped, but open fds stay), so :2323
-	# stays reachable even if Arch systemd never brings up networking.
+	# is a shared devtmpfs bind, always writable).
+	# Note: BusyBox determines applet name from /proc/self/exe, so the binary
+	# MUST be named 'sh' (e.g. /dev/sh), otherwise it fails with 'applet not found'.
+	cp /sbin/qkx-sh-static /newroot/bin/busybox 2>/dev/null
 	cp /sbin/qkx-sh-static /newroot/sbin/qkx-sh-static 2>/dev/null
-	cp /sbin/qkx-sh-static /dev/qkx-sh-static
+	cp /sbin/qkx-sh-static /dev/sh
+	chmod 755 /dev/sh /newroot/bin/busybox 2>/dev/null
 	log "static cp rc=$?; newroot sbin: $(ls -l /newroot/sbin/qkx-sh-static 2>&1)"
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
-	(while :; do telnetd -F -l /dev/qkx-sh-static -p 2323; sleep 1; done) &
+	(while :; do telnetd -F -l /dev/sh -p 2323; sleep 1; done) &
 	{
 		echo "=== qkx pre-switch $(date -u) ==="
 		echo "--- cmdline: $(cat /proc/cmdline)"
@@ -193,8 +198,9 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	log "pre-switch transcript saved"
 	(while :; do date -u >> /userdata/qkx-heartbeat.log 2>/dev/null; sleep 5; done) &
 	log "heartbeat started; switching root to Arch systemd"
-	log "calling switch_root"; switch_root /newroot /sbin/init
-	log "switch_root RETURNED rc=$? -- staying alive for forensics"
+	# switch_root requires PID 1; must be exec'd from the PID 1 shell
+	log "executing switch_root"; exec switch_root /newroot /sbin/init
+	log "switch_root EXEC FAILED rc=$?"
 	while :; do sleep 30; log "post-switch survivor"; done
 fi
 

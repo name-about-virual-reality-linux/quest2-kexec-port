@@ -15,7 +15,6 @@ import kotlin.math.roundToLong
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var statusView: TextView
     private lateinit var split: SplitBar
     private lateinit var archSizeView: TextView
     private lateinit var baseSizeView: TextView
@@ -31,7 +30,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        statusView = findViewById(R.id.status)
         split = findViewById(R.id.split)
         archSizeView = findViewById(R.id.archSize)
         baseSizeView = findViewById(R.id.baseSize)
@@ -88,7 +86,6 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {
         }
         thread {
-            val root = RootShell.hasRoot()
             // Refine with the exact userdata total when root is available.
             val st = RootShell.run("stat -f -c %b\\ %S /data")
             val p = st.out.trim().split(Regex("\\s+"))
@@ -98,24 +95,29 @@ class MainActivity : AppCompatActivity() {
             }
             val installed = QkxOps.loopImagePresent()
             runOnUiThread {
-                statusView.text = when {
-                    !root -> "No root — needs Magisk (sizes still live)"
-                    installed -> "Ready — Arch image present"
-                    else -> "Root OK — pick a size and install"
-                }
+                log(if (installed) "Arch image present" else "No Arch image yet")
                 renderSizes()
             }
         }
     }
 
-    private fun runInstall() {
-        val bytes = archBytes()
-        if (bytes < 8_000_000_000L) {
-            log("Move the divider right — Arch needs at least 8 GB")
-            return
+    private fun needRoot(): Boolean {
+        if (!RootShell.hasRoot()) {
+            log("Needs root (Magisk) for this action")
+            return false
         }
-        log("Creating ${gb(bytes)} loop image…")
+        return true
+    }
+
+    private fun runInstall() {
         thread {
+            if (!needRoot()) return@thread
+            val bytes = archBytes()
+            if (bytes < 8_000_000_000L) {
+                log("Move the divider right — Arch needs at least 8 GB")
+                return@thread
+            }
+            log("Creating ${gb(bytes)} loop image…")
             // Sparse file + ext4 + mount. mkfs binary ships in app assets.
             val assetDir = applicationInfo.nativeLibraryDir ?: filesDir.parent!!
             val r = RootShell.run(
@@ -131,10 +133,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runBoot(attempts: Int) {
-        getSharedPreferences("qkx", MODE_PRIVATE).edit()
-            .putInt("pending_attempts", attempts).apply()
-        log("Boot attempt (tries left: $attempts)…")
         thread {
+            if (!needRoot()) return@thread
+            getSharedPreferences("qkx", MODE_PRIVATE).edit()
+                .putInt("pending_attempts", attempts).apply()
+            log("Boot attempt (tries left: $attempts)…")
             QkxOps.protectionStrip()
             // Payload + keys are staged by the installer flow; jump.
             val jump = RootShell.run(QkxOps.INSMOD_BASE, timeoutMs = 30_000)

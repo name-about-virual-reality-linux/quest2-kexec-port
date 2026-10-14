@@ -101,11 +101,15 @@ class SplitBar @JvmOverloads constructor(
         // Thin divider line through the track.
         linePaint.strokeWidth = 6f
         canvas.drawLine(splitX, top + 2f, splitX, top + trackH - 2f, linePaint)
-        // Thumb knob with soft shadow.
-        val knobR = h * 0.30f
-        canvas.drawCircle(splitX, cy + 3f, knobR, knobShadow)
-        canvas.drawCircle(splitX, cy, knobR, knobPaint)
-        canvas.drawCircle(splitX, cy, knobR * 0.45f, linePaint)
+        // Bar handle: short rounded vertical bar slightly taller than the
+        // track, overlapping both sides.
+        val density = resources.displayMetrics.density
+        val barW = 16f * density
+        val overhang = 9f * density
+        rect.set(splitX - barW / 2f, top - overhang, splitX + barW / 2f, top + trackH + overhang)
+        canvas.drawRoundRect(rect, barW / 2f, barW / 2f, knobShadow)
+        rect.set(splitX - barW / 2f, top - overhang + 3f, splitX + barW / 2f, top + trackH + overhang)
+        canvas.drawRoundRect(rect, barW / 2f, barW / 2f, knobPaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {

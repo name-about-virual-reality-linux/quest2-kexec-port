@@ -182,7 +182,9 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
 	(while :; do telnetd -F -l /dev/qkx-sh-static -p 2323; sleep 1; done) &
 	log "debug shell on :2323; switching root to Arch systemd"
-	exec switch_root /newroot /sbin/init
+	log "calling switch_root"; switch_root /newroot /sbin/init
+	log "switch_root RETURNED rc=$? -- staying alive for forensics"
+	while :; do sleep 30; log "post-switch survivor"; done
 fi
 
 log "ready: telnet 10.42.0.2 (nand_ok=$NAND_OK added=$ADDED mode=$MODE)"

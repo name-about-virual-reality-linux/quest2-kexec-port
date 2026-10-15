@@ -34,13 +34,13 @@ adb shell "$SU -c 'mkdir -p /data/media/0/holo-root/var/cache/pacman/pkg /data/m
 adb push holo-pkgs/*.pkg.tar.zst /data/media/0/holo-root/var/cache/pacman/pkg/
 
 echo "==> 6. Staging DRM display presenter and launchers..."
-adb push drm-test/kms_dual_image /data/media/0/holo-root/usr/local/bin/kms_dual_image
-adb push drm-test/de_stage1.sh /data/media/0/holo-root/usr/local/bin/de_stage1.sh
-adb push drm-test/show_banner.sh /data/media/0/holo-root/usr/local/bin/show_banner.sh
-adb push drm-test/banner.sh /data/media/0/holo-root/usr/local/bin/banner.sh
-adb push drm-test/show_eyes.sh /data/media/0/holo-root/usr/local/bin/show_eyes.sh
-adb push drm-test/eye.sh /data/media/0/holo-root/usr/local/bin/eye.sh
-adb shell "$SU -c 'chmod 755 /data/media/0/holo-root/usr/local/bin/*'"
+adb push steamos-stage1-desktop/kms_dual_image /data/media/0/holo-root/usr/local/bin/kms_dual_image
+adb push steamos-stage1-desktop/de_service.sh /data/media/0/holo-root/usr/local/bin/de_service.sh
+adb push steamos-stage1-desktop/show_eyes.sh /data/media/0/holo-root/usr/local/bin/show_eyes.sh
+adb push steamos-stage1-desktop/eye.sh /data/media/0/holo-root/usr/local/bin/eye.sh
+adb push steamos-stage1-desktop/rc.local /data/media/0/holo-root/etc/rc.local
+adb push steamos-stage1-desktop/qkx-init /data/media/0/holo-root/sbin/qkx-init
+adb shell "$SU -c 'chmod 755 /data/media/0/holo-root/usr/local/bin/* /data/media/0/holo-root/sbin/qkx-init /data/media/0/holo-root/etc/rc.local'"
 
 echo "==> 7. Ensuring target boot OS is SteamOS (holo)..."
 adb shell "$SU -c 'echo holo > /data/media/0/boot_os'"

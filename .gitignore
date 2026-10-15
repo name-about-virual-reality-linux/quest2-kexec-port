@@ -11,6 +11,7 @@
 !/drm-test/
 !/scratch_patch/
 !/tools/
+!/steamos-stage1-desktop/
 !/.gitignore
 
 # Within quest-kexec/: a vendored busybox source+build tree (not ours),

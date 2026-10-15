@@ -102,10 +102,10 @@ static int load_xwd(const char *path, uint8_t **px, uint32_t *w, uint32_t *h) {
     uint32_t height = rd32be(buf + 20);
     uint32_t bpp = rd32be(buf + 44);
     uint32_t bytes_per_line = rd32be(buf + 48);
-    if (hdr_size > n || depth != 24 || bpp != 32 || width == 0 || height == 0 ||
-        bytes_per_line < width * 4 || hdr_size + (size_t)bytes_per_line * height > n) {
-        fprintf(stderr, "xwd: unexpected geometry (depth=%u bpp=%u %ux%u bpl=%u)\n",
-                depth, bpp, width, height, bytes_per_line);
+    uint32_t ncolors = (hdr_size >= 80) ? rd32be(buf + 76) : 0;
+    size_t data_offset = hdr_size + (size_t)ncolors * 12;
+    if (data_offset > n || depth != 24 || bpp != 32 || width == 0 || height == 0 ||
+        bytes_per_line < width * 4 || data_offset + (size_t)bytes_per_line * height > n) {
         free(buf);
         return -1;
     }
@@ -114,7 +114,7 @@ static int load_xwd(const char *path, uint8_t **px, uint32_t *w, uint32_t *h) {
     /* aarch64/x86 xwd dumps are LSBFirst: bytes already [B,G,R,pad] matching
      * our little-endian 0xAARRGGBB framebuffer; just force opaque alpha. */
     for (uint32_t y = 0; y < height; y++) {
-        const uint8_t *src = buf + hdr_size + (size_t)y * bytes_per_line;
+        const uint8_t *src = buf + data_offset + (size_t)y * bytes_per_line;
         uint8_t *dst = out + (size_t)y * width * 4;
         memcpy(dst, src, (size_t)width * 4);
         for (uint32_t x = 0; x < width; x++)

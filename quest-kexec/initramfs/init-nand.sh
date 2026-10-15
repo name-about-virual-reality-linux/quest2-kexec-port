@@ -102,12 +102,20 @@ ADDED=0
 DMDEV=
 if [ -e /sys/block/sda/sda9 ]; then
 	log "sda9 present"
+	# Prevent UFS from auto-hibernating or clock-gating without Android power manager
+	for node in clkgate_enable clkscale_enable auto_hibern8; do
+		echo 0 > /sys/devices/platform/soc/1d84000.ufshc/$node 2>/dev/null || true
+	done
 	KEYS=/tmp/nand-keys.txt
 	META=/tmp/nand-metadata-key.txt
 	got_keys=0; got_meta=0
-	wget -q http://10.42.0.1:8000/nand-keys.txt -O "$KEYS" && got_keys=1
-	[ "$got_keys" = 1 ] || { wget -q http://10.42.0.1:8000/nand-key.txt -O "$KEYS" && got_keys=1; }
-	wget -q http://10.42.0.1:8000/nand-metadata-key.txt -O "$META" && got_meta=1
+	for attempt in $(seq 1 10); do
+		wget -q http://10.42.0.1:8000/nand-keys.txt -O "$KEYS" && got_keys=1
+		[ "$got_keys" = 1 ] || { wget -q http://10.42.0.1:8000/nand-key.txt -O "$KEYS" && got_keys=1; }
+		wget -q http://10.42.0.1:8000/nand-metadata-key.txt -O "$META" && got_meta=1
+		if [ "$got_keys" = 1 ] && [ "$got_meta" = 1 ]; then break; fi
+		sleep 1
+	done
 	[ "$got_keys" = 1 ] || log "key fetch failed (is the Mac http server up?)"
 	[ "$got_meta" = 1 ] || log "metadata key fetch failed"
 	if [ "$got_keys" = 1 ] && [ "$got_meta" = 1 ]; then
@@ -190,23 +198,18 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	# Keep userdata accessible inside guest OS at /userdata
 	mkdir -p /newroot/userdata
 	mount --bind /userdata /newroot/userdata 2>/dev/null
-	# Debug shell that survives switch_root: static binary copied into the
-	# new root + telnetd bound to absolute paths valid in BOTH roots (/dev
-	# is a shared devtmpfs bind, always writable).
-	# Note: BusyBox determines applet name from /proc/self/exe, so the binary
-	# MUST be named 'sh' (e.g. /dev/sh), otherwise it fails with 'applet not found'.
-	cp /sbin/qkx-sh-static /newroot/bin/busybox 2>/dev/null
-	cp /sbin/qkx-sh-static /newroot/sbin/qkx-sh-static 2>/dev/null
-	cp /sbin/qkx-sh-static /dev/sh
-	chmod 755 /dev/sh /newroot/bin/busybox 2>/dev/null
-	log "static cp rc=$?; newroot sbin: $(ls -l /newroot/sbin/qkx-sh-static 2>&1)"
+	# Debug shell that survives switch_root: static binary copied into /dev/busybox
+	# (/dev is a shared devtmpfs bind, always writable).
+	cp /sbin/qkx-sh-static /dev/busybox
+	chmod 755 /dev/busybox 2>/dev/null
+	log "static /dev/busybox rc=$?; dev/busybox: $(ls -l /dev/busybox 2>&1)"
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
 	# Create 4.19-compatible PID 1 init script for guest OS
 	# (bypasses systemd v261 STATX_MNT_ID / EUNATCH failure on Linux 4.19)
 	cat << 'EOINIT' > /newroot/sbin/qkx-init
 #!/bin/sh
-export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 export HOME=/root
 export TERM=vt100
 
@@ -233,28 +236,11 @@ ip link set usb0 up 2>/dev/null
 
 echo "qkx-init: network up (10.42.0.2 on usb0)" > /dev/kmsg
 
-# Install BusyBox symlinks into /bin if busybox is present
-[ -x /bin/busybox ] && /bin/busybox --install -s /bin 2>/dev/null
-
-# Start persistent telnet debug shells in target root
-(while :; do (/bin/busybox telnetd -F -l /bin/sh -p 23 || telnetd -F -l /bin/sh -p 23 || /dev/sh telnetd -F -l /bin/sh -p 23); sleep 1; done) &
-(while :; do (/bin/busybox telnetd -F -l /bin/sh -p 2323 || telnetd -F -l /bin/sh -p 2323 || /dev/sh telnetd -F -l /bin/sh -p 2323); sleep 1; done) &
+# Start persistent telnet debug shells in target root using /bin/bash via /dev/busybox
+(while :; do (/dev/busybox telnetd -F -l /bin/bash -p 23 || /dev/busybox telnetd -F -l /bin/sh -p 23); sleep 1; done) &
+(while :; do (/dev/busybox telnetd -F -l /bin/bash -p 2323 || /dev/busybox telnetd -F -l /bin/sh -p 2323); sleep 1; done) &
 
 echo "qkx-init: shells active on :23 and :2323" > /dev/kmsg
-
-# Ensure sshd privilege-separation user and directories exist
-mkdir -p /usr/share/empty.sshd /var/empty
-grep -q '^sshd:' /etc/passwd 2>/dev/null || echo 'sshd:x:74:74:Privilege-separated SSH:/usr/share/empty.sshd:/bin/false' >> /etc/passwd
-grep -q '^sshd:' /etc/group 2>/dev/null || echo 'sshd:x:74:' >> /etc/group
-
-# Fix SSH permissions and start sshd if installed
-if [ -x /usr/bin/sshd ]; then
-	chown 0:0 /usr/share/empty.sshd /var/empty 2>/dev/null
-	chmod 755 /usr/share/empty.sshd /var/empty 2>/dev/null
-	chown -R 0:0 /etc/ssh 2>/dev/null
-	chmod 600 /etc/ssh/ssh_host_*_key 2>/dev/null
-	/usr/bin/sshd 2>/dev/null &
-fi
 
 echo "=== $OS_BANNER READY (10.42.0.2) ===" > /dev/kmsg
 

@@ -1,0 +1,7 @@
+cat /etc/rc.local; echo ===END_OF_FILE===
+[?2004h[root@(none) /]# cat /etc/rc.local; echo ===END_OF_FILE===
+[?2004l#!/bin/bash
+ip route add default via 10.42.0.1 dev usb0 2>/dev/null || true
+echo 0 > /proc/sys/net/core/bpf_jit_enable 2>/dev/null || true
+
+/usr/local/bin/de_service.sh > /tmp/de_service.log 2>&1 &

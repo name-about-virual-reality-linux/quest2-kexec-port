@@ -2958,3 +2958,25 @@ and individually verified, live kexec mount test still open.
 `++:.                           `-/+/                            
 .`                                 `/
 ```
+
+### VICTORY: SteamOS Stage-1 Desktop Live in Quest 2 Dual-Eye Lenses!
+- **Stereo Hardware Display Pipeline**:
+  - Panel: 1920x3664 @ 120Hz portrait panel (`clock=382164`).
+  - Connector: 29 (`active=1`).
+  - CRTC: 129 (`crtc-0`, `enable=1`, `active=1`, `plane_mask=c0`).
+  - Planes:
+    - **Plane 101 (`plane-7`)**: Left eye viewport, mapped to `crtc-0`, FB 263 (1920x3664 XR24).
+    - **Plane 98 (`plane-6`)**: Right eye viewport, mapped to `crtc-0`, FB 263 (1920x3664 XR24).
+- **Desktop Environment**:
+  - Headless X11: `Xvfb :99 -screen 0 3664x1920x24 +extension MIT-SHM`.
+  - Window Manager: `openbox`.
+  - Stereo Terminals:
+    - Left Eye: `xterm -geometry 75x35+360+460` (green on dark background, 24pt Droid Sans Mono).
+    - Right Eye: `xterm -geometry 75x35+2192+460` (green on dark background, 24pt Droid Sans Mono).
+  - Terminal Banner: Displays SteamVR eye identification, resolution (1832x1920 per eye @ 120Hz), DRM plane mapping, and `Holo core Aarch64` OS release info.
+- **Presenter Engine (`kms_dual_image`)**:
+  - Fixed XWD colormap offset calculation (`hdr_size + ncolors * 12` bytes = 3179 bytes) to parse standard XWD dumps cleanly without geometry errors.
+  - Software 90-degree CCW rotation (`QKX_ROT=1`) mapping the 3664x1920 landscape X11 desktop onto the 1920x3664 portrait hardware panel with optical centering for both eyes.
+  - Dedicated `/run` tmpfs staging avoiding rootfs contention and locking.
+  - Background snapshot daemon operating at 0.33Hz (`sleep 3`), keeping CPU load at **0.00** while presenting rock-solid 120Hz stereo scanout.
+

@@ -1,11 +1,17 @@
-#!/bin/bash
+[?2004h[root@(none) /]# cat /usr/local/bin/eye.sh; echo ===END_OF_FILE===
+[?2004l#!/bin/bash
 # $1 = LEFT or RIGHT
 clear
-echo "==============================="
-echo "  $1 EYE TERMINAL"
-echo "==============================="
+echo "================================================="
+echo "       STEAM VR - $1 EYE DISPLAY"
+echo "================================================="
 echo ""
-cat /etc/os-release | head -3
+cat /etc/os-release
 echo ""
-echo "This shell is live."
+echo "Resolution: 1832x1920 per eye | Mode: 120Hz"
+echo "Stereo Commit: Plane 101 (L) / Plane 98 (R)"
+echo "================================================="
+echo ""
+echo "Welcome to SteamOS Stage-1 Desktop!"
+echo ""
 exec /bin/bash --login

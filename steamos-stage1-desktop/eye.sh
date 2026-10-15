@@ -1,12 +1,11 @@
-[?2004h[root@(none) /]# cat /usr/local/bin/eye.sh; echo ===END_OF_FILE===
-[?2004l#!/bin/bash
-# $1 = LEFT or RIGHT
+#!/bin/bash
 clear
 echo "================================================="
-echo "       STEAM VR - $1 EYE DISPLAY"
+echo "             STEAM DECK / STEAMOS"
 echo "================================================="
 echo ""
-cat /etc/os-release
+echo "OS: SteamOS Holo Core (Aarch64 Preview)"
+echo "Host: Meta Quest 2 (Snapdragon XR2 / Adreno 650)"
 echo ""
 echo "Resolution: 1832x1920 per eye | Mode: 120Hz"
 echo "Stereo Commit: Plane 101 (L) / Plane 98 (R)"

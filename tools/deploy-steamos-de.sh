@@ -36,11 +36,15 @@ adb push holo-pkgs/*.pkg.tar.zst /data/media/0/holo-root/var/cache/pacman/pkg/
 echo "==> 6. Staging DRM display presenter and launchers..."
 adb push steamos-stage1-desktop/kms_dual_image /data/media/0/holo-root/usr/local/bin/kms_dual_image
 adb push steamos-stage1-desktop/de_service.sh /data/media/0/holo-root/usr/local/bin/de_service.sh
+adb push steamos-stage1-desktop/de_service_kde.sh /data/media/0/holo-root/usr/local/bin/de_service_kde.sh
+adb push steamos-stage1-desktop/mirror_xwd.py /data/media/0/holo-root/usr/local/bin/mirror_xwd.py
 adb push steamos-stage1-desktop/show_eyes.sh /data/media/0/holo-root/usr/local/bin/show_eyes.sh
 adb push steamos-stage1-desktop/eye.sh /data/media/0/holo-root/usr/local/bin/eye.sh
 adb push steamos-stage1-desktop/rc.local /data/media/0/holo-root/etc/rc.local
 adb push steamos-stage1-desktop/qkx-init /data/media/0/holo-root/sbin/qkx-init
-adb shell "$SU -c 'chmod 755 /data/media/0/holo-root/usr/local/bin/* /data/media/0/holo-root/sbin/qkx-init /data/media/0/holo-root/etc/rc.local'"
+# "we are in kexec" status light (blinks the PM8150L tri-led purple)
+adb push quest-kexec/initramfs/qkx-led.sh /data/media/0/holo-root/bin/qkx-led.sh
+adb shell "$SU -c 'chmod 755 /data/media/0/holo-root/usr/local/bin/* /data/media/0/holo-root/bin/qkx-led.sh /data/media/0/holo-root/sbin/qkx-init /data/media/0/holo-root/etc/rc.local'"
 
 echo "==> 7. Ensuring target boot OS is SteamOS (holo)..."
 adb shell "$SU -c 'echo holo > /data/media/0/boot_os'"

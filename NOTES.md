@@ -2980,3 +2980,106 @@ and individually verified, live kexec mount test still open.
   - Dedicated `/run` tmpfs staging avoiding rootfs contention and locking.
   - Background snapshot daemon operating at 0.33Hz (`sleep 3`), keeping CPU load at **0.00** while presenting rock-solid 120Hz stereo scanout.
 
+## 2026-10-15: Plasma bring-up hardening, kexec status light, session export
+
+Continuing the SteamOS-on-NAND desktop thread after the Antigravity session
+died on a `429 RESOURCE_EXHAUSTED` (individual quota) with the headset already
+unreachable (`arp` incomplete on `en7`, telnet to 10.42.0.2 timing out, no
+`adb devices`). Everything below is host-side work: the target was never
+reached, so nothing here is hardware-verified yet.
+
+### Where the previous session actually stopped (recovered from its DB)
+- Final steps: `arp -an | grep 10.42.0` -> `(incomplete)`, then the quota 429.
+  Kill surface was the network, not the code.
+- The Plasma launcher it wrote never got as far as `kwin_x11`: the target's
+  `/tmp` had `xvfb.log`, `.X99-lock`, `kms_dual_image.log` and a 22-byte
+  `de_service.log` containing only `nohup: ignoring input` -- and **no
+  `kwin.log` or `plasmashell.log` at all**. The script stalled between starting
+  Xvfb and starting the WM and reported nothing, so the panel sat on the
+  presenter's test pattern. That is the failure this session's changes target.
+- Confirmed from the same session: `plasmashell 6.5.3` / `Qt 6.10` / `kwin-x11
+  6.5.3` *are* installed in `/data/media/0/holo-root` (the install step
+  succeeded), and `python3 -> python3.13` exists there. So the blocker was the
+  launcher, not missing packages.
+
+### Launcher rewritten: `steamos-stage1-desktop/de_service.sh`
+- One script, two stages, `QKX_STAGE=auto|1|2`: stage 2 = `kwin_x11` +
+  `plasmashell`, stage 1 = `openbox` + per-eye terminals (the verified layout).
+  Auto tries stage 2, health-checks it, and **falls back to stage 1** if the WM
+  or shell is missing, dies on startup, or exits later (a watchdog re-checks
+  plasmashell every 15 s -- it is what the OOM killer took both previous
+  times). The panel can no longer be left showing a frozen frame by design.
+- Every step is existence-checked or timeout-bounded (`timeout 20` around
+  `xwd`, `dbus-launch`), and Xvfb readiness is probed with `xsetroot` instead
+  of a blind `sleep 2`. Each step logs what it did.
+- `KWIN_COMPOSE=Q` by default. Checked the actual KWin 6.5.3 binaries rather
+  than guessing: `libkwin.so.6.5.3` still honours `KWIN_COMPOSE` ("Compositing
+  forced to OpenGL mode by environment variable" / "... QPainter mode ...",
+  "Unknown KWIN_COMPOSE mode set, ignoring"), QPainter is the software backend,
+  and Xvfb advertises no GLX -- so the OpenGL default would fail. (KWin 6 has
+  no XRender backend, so the old Plasma-5 value is gone.)
+- `enable_swap()`: zram swap is one sysfs write away (`CONFIG_ZRAM=y` is built
+  into the target kernel) and is the cheapest real mitigation for the
+  kwin+plasmashell OOM wedge. Best-effort; boot never depends on it.
+- Baloo indexing disabled via `baloofilerc` (`Indexing-Enabled=false`) rather
+  than the `BALOO_DISABLED` env var, which KDE does not read.
+
+### Frame pump de-raced: `steamos-stage1-desktop/mirror_xwd.py`
+- Now the single owner of the capture loop: `xwd` -> optional eye mirror ->
+  **`os.replace()`** onto `/run/frame.xwd`. The old split (an `xwd` loop plus a
+  separate mirror daemon rewriting the file in place) let the presenter read a
+  half-mirrored frame; an atomic rename means it only ever sees whole frames.
+- XWD header parsed properly now: `data_offset = header_size + ncolors * 12`
+  with a file-size sanity fallback, row stride from `bytes_per_line`
+  (padding-safe), `bits_per_pixel/8` for pixel size. Unit-tested against
+  synthetic XWDs for `ncolors=0`, `ncolors=256` and padded strides.
+
+### "We are in kexec" status light
+- New `quest-kexec/initramfs/qkx-led.sh`, bundled into the NAND initramfs
+  (`bin/qkx-led.sh`) and run early by `init-nand.sh`; `qkx-init` re-arms it
+  after `switch_root` (it is also copied to `/newroot/bin/`).
+- Blinks **purple** = red + blue at full, green dark, on the PM8150L tri-led
+  (`/soc/.../qcom,leds@d000`, labels red/green/blue). No kernel or DT change
+  needed: `CONFIG_LEDS_QTI_TRI_LED=y`, `CONFIG_LEDS_TRIGGER_TIMER=y`,
+  `CONFIG_PWM_QTI_LPG=y` are already in `build/out-target/target.config` and
+  the boot DTB carries the node enabled (verified with `dtc` on
+  `build/out-payload-nand-rw/boot.dtb`).
+- Blink is done in PMIC hardware via the led `timer` trigger, *not* a shell
+  loop: no CPU on a board with a dead fan, and it survives `switch_root`
+  (a shell loop would lose the initramfs's `/bin/sleep` when the old root is
+  deleted). Order in the script matters and is documented: the DT marks the
+  channels `qcom,continuous-mode` and `qpnp_tri_led_set_blink()` **swallows the
+  first blink request per channel** (it only clears the flag), so it writes
+  trigger -> brightness -> delay_on -> delay_off.
+- Degrades cleanly: if the tri-led never probes, it logs one line and exits 0.
+  Simulated against fake `/sys/class/leds` trees (bare and `pm8150l:red` names,
+  missing dir) before bundling.
+- `build.py` grew `--extra-file SRC:DEST` because `--extra` asserts a static
+  ARM64 ELF, which a shell script is not.
+
+### Corrupted deploy files fixed
+- `steamos-stage1-desktop/rc.local` and `qkx-init` both had three junk lines
+  pasted from a telnet transcript at the top (CRLF, ANSI bracketed-paste
+  escapes, `cat /etc/rc.local; echo ===END_OF_FILE===`), which pushed `#!` off
+  line 1 so neither could be exec'd as intended. Rewritten clean, LF only.
+  `de_service.sh` had the same damage and was already cleaned by the previous
+  session.
+
+### Session export for hand-off
+- `tools/export-antigravity-log.py` exports both the newest Antigravity
+  CLI log and a readable transcript of the newest conversation DB (the last
+  session is otherwise only readable as protobuf blobs), writing under
+  `logs/antigravity/` -- untracked by git via the default-deny `.gitignore`.
+  Secrets (bearer tokens, API keys, 128-hex key material) are redacted by
+  default; `--no-redact` opts out. The 2026-10-15 export covers all 8888 steps
+  of `09fe2628-...`.
+
+### Next (needs the headset back)
+1. Re-root, stage the payload, `insmod` as usual; watch for the purple blink
+   as the first sign the kexec kernel is alive (`dmesg | grep qkx-led`).
+2. `telnet 10.42.0.2 23`, then `cat /sys/class/leds/*/trigger` to confirm the
+   tri-led probed at all -- if `/sys/class/leds` is empty, the PM8150L MISC
+   peripheral is not coming up and the indicator needs a kernel look.
+3. `bash /usr/local/bin/de_service.sh` by hand (not from rc.local) so its log
+   is on the terminal, then `cat /tmp/kwin.log /tmp/plasmashell.log`. With
+   `QKX_STAGE=2` it will not fall back, which is what we want while debugging.

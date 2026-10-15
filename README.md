@@ -8,18 +8,25 @@ debugging work that followed once kexec itself was working.
 
 ## Status
 
-kexec-booting a custom minimal Linux kernel (BusyBox + USB Ethernet) on
-a real Quest 2 works — see `NOTES.md` for the full day-by-day log,
-including the exact kernel source/commit matched to the device, the two
-loader fixes needed for Quest 2 vs Quest Pro hardware, and kernel config
-changes required for a clean boot.
+kexec-booting a custom Linux kernel on a real Quest 2 works, and that kernel
+now boots **SteamOS / Holo Core natively from the device's own UFS NAND**, with
+a working stereo desktop presented to both lenses over raw KMS. See `NOTES.md`
+for the full day-by-day log: the exact kernel source/commit matched to the
+device, the two loader fixes needed for Quest 2 vs Quest Pro hardware, the
+NAND decrypt path (dm-default-key + fscrypt keys grabbed from the running
+Android kernel), and the display bring-up.
 
-Display bring-up (getting the kexec'd kernel to drive the Quest 2's own
-panel over DSI) is still open — diagnosed as DSC bitstream corruption,
-not yet resolved. That work is paused in favor of
-[vr-shell](https://github.com/name-about-virual-reality-linux/vr-shell),
-a VR desktop shell developed against a simulated headset so it doesn't
-block on real display bring-up.
+Two desktop stages exist. Stage 1 (openbox + one terminal per eye) is
+**verified in-headset**; stage 2 (KDE Plasma 6) is installed on the target but
+not yet confirmed on the panel -- its launcher was rewritten to health-check
+itself and fall back to stage 1 rather than leave the panel dark. See
+`steamos-stage1-desktop/README.md`.
+
+While in kexec, the headset's RGB status LED blinks purple as a "this is not
+Android" indicator (`quest-kexec/initramfs/qkx-led.sh`).
+
+The earlier DSI bring-up work (raw panel, before the NAND path) is paused in
+favor of [vr-shell](https://github.com/name-about-virual-reality-linux/vr-shell).
 
 ## Layout
 

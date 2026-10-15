@@ -30,6 +30,7 @@ python3 quest-kexec/initramfs/build.py \
   --extra tools/dmcreate:bin/dmcreate \
   --extra tools/dmstat:bin/dmstat \
   --extra quest-kexec/out/busybox:sbin/qkx-sh-static \
+  --extra-file quest-kexec/initramfs/qkx-led.sh:bin/qkx-led.sh \
   --output quest-kexec/out/initramfs-nand.gz \
   --max-size 0x400000
 ls -l quest-kexec/out/initramfs-nand.gz

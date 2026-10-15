@@ -51,3 +51,7 @@ Module.symvers
 /installer/build/
 /installer/app/build/
 /installer/local.properties
+
+# Python bytecode caches from the stage-1 desktop daemons and tools here.
+__pycache__/
+*.pyc

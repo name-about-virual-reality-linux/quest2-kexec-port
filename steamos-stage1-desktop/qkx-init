@@ -1,6 +1,4 @@
-cat /sbin/qkx-init; echo ===END_OF_FILE===
-[?2004h[root@(none) /]# cat /sbin/qkx-init; echo ===END_OF_FILE===
-[?2004l#!/bin/sh
+#!/bin/sh
 export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 export HOME=/root
 export TERM=vt100
@@ -27,6 +25,11 @@ ip addr add 10.42.0.2/24 dev usb0 2>/dev/null
 ip link set usb0 up 2>/dev/null
 
 echo "qkx-init: network up (10.42.0.2 on usb0)" > /dev/kmsg
+
+# Keep the "we are in kexec" status light blinking. It is normally armed by
+# the initramfs (qkx-led.sh), but re-arm it here so a switch_root that lost
+# the initramfs still shows the indicator.
+[ -x /bin/qkx-led.sh ] && /bin/qkx-led.sh > /dev/kmsg 2>&1 || true
 
 # Start persistent telnet debug shells in target root using /bin/bash via /dev/busybox
 (while :; do (/dev/busybox telnetd -F -l /bin/bash -p 23 || /dev/busybox telnetd -F -l /bin/sh -p 23); sleep 1; done) &

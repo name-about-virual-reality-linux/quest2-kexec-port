@@ -43,6 +43,10 @@ def main():
     ap.add_argument("--init", type=Path, default=Path(__file__).with_name("init.sh"))
     ap.add_argument("--extra", action="append", default=[], metavar="SRC:DEST",
                     help="add a static ARM64 binary, e.g. modeset:bin/modeset")
+    ap.add_argument("--extra-file", action="append", default=[],
+                    metavar="SRC:DEST",
+                    help="add an arbitrary (non-ELF) file, e.g. a shell script:"
+                         " quest-kexec/initramfs/qkx-led.sh:bin/qkx-led.sh")
     ap.add_argument("--os-dir", type=Path,
                     help="directory from os-install.sh holding maps/ and partitions")
     ap.add_argument("--os-scripts", type=Path,
@@ -98,6 +102,9 @@ def main():
     for spec in a.extra:
         src, dest = spec.split(":", 1)
         entries.append((dest, stat.S_IFREG | 0o755, check_static_arm64(Path(src)), 0, 0))
+    for spec in a.extra_file:
+        src, dest = spec.split(":", 1)
+        entries.append((dest, stat.S_IFREG | 0o755, Path(src).read_bytes(), 0, 0))
     entries.append(("TRAILER!!!", 0, b"", 0, 0))
     data = gzip.compress(archive(entries), mtime=0)
     if len(data) > a.max_size:

@@ -41,6 +41,11 @@ bootdone() { [ -w /proc/qkx_bootdone ] && echo "$1" > /proc/qkx_bootdone; }
 
 log "reached $(uname -r)"
 
+# "We are in kexec" indicator: blink the headset status LED purple. The blink
+# runs in PMIC hardware (led timer trigger), so it survives switch_root.
+# Fire-and-forget: it must never block or fail the boot.
+[ -x /bin/qkx-led.sh ] && /bin/qkx-led.sh &
+
 g=/config/usb_gadget/qkx
 mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/ecm.usb0"
 echo 0x1d6b > "$g/idVendor"
@@ -202,6 +207,9 @@ if [ "$NAND_OK" = 1 ] && [ "$MODE" = rw ]; then
 	# (/dev is a shared devtmpfs bind, always writable).
 	cp /sbin/qkx-sh-static /dev/busybox
 	chmod 755 /dev/busybox 2>/dev/null
+	# Same for the kexec status-light helper: qkx-init re-arms it after
+	# switch_root in case this initramfs run never got to it.
+	[ -f /bin/qkx-led.sh ] && cp /bin/qkx-led.sh /newroot/bin/qkx-led.sh && chmod 755 /newroot/bin/qkx-led.sh
 	log "static /dev/busybox rc=$?; dev/busybox: $(ls -l /dev/busybox 2>&1)"
 	log "userdata mount: $(mount | grep ' /userdata ')"
 	log "newroot init: $(ls -l /newroot/sbin/init 2>&1)"
@@ -236,6 +244,10 @@ ip link set usb0 up 2>/dev/null
 
 echo "qkx-init: network up (10.42.0.2 on usb0)" > /dev/kmsg
 
+# Keep the "we are in kexec" status light blinking (normally armed by the
+# initramfs already; re-arm so a switch_root that lost it still shows).
+[ -x /bin/qkx-led.sh ] && /bin/qkx-led.sh > /dev/kmsg 2>&1
+
 # Start persistent telnet debug shells in target root using /bin/bash via /dev/busybox
 (while :; do (/dev/busybox telnetd -F -l /bin/bash -p 23 || /dev/busybox telnetd -F -l /bin/sh -p 23); sleep 1; done) &
 (while :; do (/dev/busybox telnetd -F -l /bin/bash -p 2323 || /dev/busybox telnetd -F -l /bin/sh -p 2323); sleep 1; done) &
@@ -263,9 +275,8 @@ EOINIT
 		echo "--- newroot:"; ls /newroot/sbin/init /newroot/sbin/qkx-init /newroot/sbin/qkx-sh-static 2>&1
 		dmesg | tail -n 40
 	} > /userdata/qkx-boot.log 2>&1
-	log "pre-switch transcript saved"
-	(while :; do date -u >> /userdata/qkx-heartbeat.log 2>/dev/null; sleep 5; done) &
-	log "heartbeat started; stopping pre-switch telnetd"
+	log "stopping pre-switch background tasks (klogwatch, telnetd)"
+	killall -9 qkx-klogwatch 2>/dev/null || true
 	killall telnetd 2>/dev/null || true
 	log "executing switch_root to /sbin/qkx-init"
 	exec switch_root /newroot /sbin/qkx-init

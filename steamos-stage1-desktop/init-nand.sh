@@ -263,9 +263,8 @@ EOINIT
 		echo "--- newroot:"; ls /newroot/sbin/init /newroot/sbin/qkx-init /newroot/sbin/qkx-sh-static 2>&1
 		dmesg | tail -n 40
 	} > /userdata/qkx-boot.log 2>&1
-	log "pre-switch transcript saved"
-	(while :; do date -u >> /userdata/qkx-heartbeat.log 2>/dev/null; sleep 5; done) &
-	log "heartbeat started; stopping pre-switch telnetd"
+	log "stopping pre-switch background tasks (klogwatch, telnetd)"
+	killall -9 qkx-klogwatch 2>/dev/null || true
 	killall telnetd 2>/dev/null || true
 	log "executing switch_root to /sbin/qkx-init"
 	exec switch_root /newroot /sbin/qkx-init

@@ -2985,8 +2985,10 @@ and individually verified, live kexec mount test still open.
 Continuing the SteamOS-on-NAND desktop thread after the Antigravity session
 died on a `429 RESOURCE_EXHAUSTED` (individual quota) with the headset already
 unreachable (`arp` incomplete on `en7`, telnet to 10.42.0.2 timing out, no
-`adb devices`). Everything below is host-side work: the target was never
-reached, so nothing here is hardware-verified yet.
+`adb devices`). Everything in this first part is host-side work: the target was
+not reached while it was written. It came back later the same day -- see
+"Hardware results once the headset came back" at the end of this section for
+what was actually verified on the device.
 
 ### Where the previous session actually stopped (recovered from its DB)
 - Final steps: `arp -an | grep 10.42.0` -> `(incomplete)`, then the quota 429.
@@ -3074,12 +3076,120 @@ reached, so nothing here is hardware-verified yet.
   default; `--no-redact` opts out. The 2026-10-15 export covers all 8888 steps
   of `09fe2628-...`.
 
-### Next (needs the headset back)
-1. Re-root, stage the payload, `insmod` as usual; watch for the purple blink
-   as the first sign the kexec kernel is alive (`dmesg | grep qkx-led`).
-2. `telnet 10.42.0.2 23`, then `cat /sys/class/leds/*/trigger` to confirm the
-   tri-led probed at all -- if `/sys/class/leds` is empty, the PM8150L MISC
-   peripheral is not coming up and the indicator needs a kernel look.
-3. `bash /usr/local/bin/de_service.sh` by hand (not from rc.local) so its log
-   is on the terminal, then `cat /tmp/kwin.log /tmp/plasmashell.log`. With
-   `QKX_STAGE=2` it will not fall back, which is what we want while debugging.
+### Hardware results once the headset came back (same day, later)
+Everything above was host-side only. The headset did come back (Android
+recovered from the kexec handoff 3x -- two manual power-cycles and one warm
+reset via `echo r > /proc/qkx_bootdone`), so these are now real:
+
+- **Purple kexec LED verified on hardware.** After a successful kexec boot,
+  `/sys/class/leds/red` and `/sys/class/leds/blue` were on the `timer` trigger,
+  brightness 255, `delay_on=400 delay_off=400`; `green` was trigger `none`,
+  brightness 0. `dmesg` carried
+  `qkx-led: kexec indicator armed on /sys/class/leds/red + /sys/class/leds/blue: purple blink 400ms/400ms`
+  at t=0.843 s and again t=4.290 s (armed in the initramfs, re-armed by
+  `qkx-init` after `switch_root`).
+- **The PM8150B tri-led node is the wrong one.** `pm8150b@2:qcom,leds@d000`
+  fails to probe (`Devicetree properties parsing failed, rc=-22`); the node
+  that actually comes up is `pm8150l@5:qcom,leds@d000`. The script matches on
+  the LED class names (`red`/`green`/`blue`), so this is transparent -- but if
+  someone later pins the path by compatible, pin it to PM8150L.
+- **NAND root boots and hands off cleanly.** `/dev/dm-0 on / type f2fs (rw)`,
+  `/sbin/qkx-init` is PID 1, hostname `(none)`, root telnet shell.
+- **`de_service.sh` reaches stage 2** -- `kwin_x11` + `plasmashell` both
+  started and the launcher logged `STAGE 2 up` / `ready`. The previous
+  session's "stalls before kwin" bug is gone.
+- **The presenter works, then sometimes does not.** On one boot
+  `kms_dual_image` (pid 850) committed frames normally
+  (`frame 1 committed (pattern)` ...); on another boot it hit the
+  allocation-dependent "mmap'd framebuffer hang" above again. The panel was
+  therefore black on the boots where it wedged, which is still the blocker for
+  "Plasma on the displays".
+- **Telnet port hygiene:** :23 wedged this boot (echoed input, no output);
+  **:2323** kept working. Both are started by `qkx-init`.
+- **Two python servers on :8000 are harmless, not a hazard.** Verified by
+  comparing the bytes actually served over IPv4:8000 against both candidate
+  directories -- the *older* server (a leftover `range_server.py` from the
+  dead Antigravity session, serving `/tmp/qkx-keys`) is the one answering
+  IPv4, the new `tools/nand-serve-keys.sh` bound IPv6 only and is shadowed.
+  The served `nand-keys.txt` differs from the fresh one **only in the
+  per_boot descriptor** (`544f60cc...` vs `15710656...`); the three
+  persistent descriptors (`device-DE`, `DE-user0`, `CE-user0`) and the
+  dm-default-key metadata key are byte-identical, and `qkx-root` needs only
+  CE-user0 -- so a stale server cannot break the mount. Still worth killing
+  the leftover before a jump so the logs are unambiguous.
+
+### The presenter wedge reproduced live, and the missing step found
+Second bring-up attempt (same day). Kexec `insmod` worked first try (the
+earlier "boot roulette" stall in `deferred_probe_initcall` -> `flush_work`
+was gone on retry), ECM gadget came up in ~5 s and both telnet ports were
+live in the *guest* OS, so `switch_root` had succeeded. Everything was in
+place -- and then the presenter did this:
+
+- `/run/kms_dual_image.log` went
+  `created FB 263 (1920x3664 pitch=7680 size=28139520)` ->
+  `committing DISABLE pass...` -> `disable pass ret=0 (errno=0)` and **stopped**.
+  The very next thing it does is the first CPU write into the `mmap`'d dumb
+  buffer, i.e. it never reached `frame 1 committed`.
+- `ps -o pid,stat,wchan,time -p <pid>` -> `R - 00:00:07`: state `R`, burning
+  CPU, no kernel stack available. Exactly the documented hang.
+- This time it was **fatal to the whole box**, not contained: within seconds
+  `arp -n 10.42.0.2` went incomplete, both telnet ports closed, `adb devices`
+  empty, and the USB gadget stayed enumerated (hardware-cached) with nothing
+  behind it. No watchdog recovery. Power-cycle only.
+
+So this is not "sometimes the presenter works": one CPU stuck in the fault
+handler is enough to take the SoC down, and it does so on the first buffer
+touch.
+
+**Root cause candidate, and it was self-inflicted.** `quest-kexec/tools/run.sh`
+has a mandatory step our manual `qkx-jump.sh` never did: it loads
+`ion_secmap.ko` on the *running Android* kernel, collects the physical ranges
+stock ION has handed to secure VMs, and folds them into the payload DTB as a
+single `no-map` reserved-memory node (`/reserved-memory/qkx-ionsec`) before
+jumping. Its own comment: "Stock hyp-assigns secure ION pages to other VMs;
+they stay locked after kexec and any access from the next kernel hangs the
+CPU." A `no-map` reservation keeps those pages out of the linear map and out
+of the page allocator -- which is precisely where `CREATE_DUMB` gets its
+pages. The notes already flagged the manual procedure as skipping this
+(l.852) and called it the "not yet tried" fix for this exact hang (l.511).
+
+### New: tools/qkx-reserve-ionsec.sh
+Ports that step out of `run.sh` and into a macOS-runnable script.
+
+- `run.sh` itself cannot run here: it uses `mktemp --suffix=` and `md5sum <`
+  in ways macOS dislikes, and it hard-codes an `insmod` of `/data/local/tmp/qkx.ko`.
+- The committed `module/ion_secmap.ko.off` **cannot load on this headset**:
+  its vermagic is `4.19.325-cip128-st12-g49638c7a8637`, but the Quest 2 runs
+  `4.19.325-cip128-st12-g4b63ca9fd613` (`captured-quest2/android-release`).
+  It is a stale build for a different release -- rename-to-`.off` was the
+  right call, but it needs rebuilding, not abandoning.
+- Rebuilt with the repo's own containers, no new tooling:
+  `docker run --rm -v qkx-ksrc:/ksrc -v qkx-out:/kout -v $PWD/quest-kexec/module:/mod
+  qkx-build:latest` + the `ion_secmap.c` include rewritten from the long-gone
+  relative `../../oculus-linux-kernel-android` to `/ksrc`, built with
+  `make -C /ksrc O=/kout M=/build ... LOCALVERSION=-cip128-st12-g4b63ca9fd613`.
+  Result: `quest-kexec/module/ion_secmap.ko`, vermagic identical to the
+  device's. (Note `make -C /kout M=... modules` does **not** work -- the
+  output dir's auto-generated Makefile needs `-C <src> O=<out>`.)
+- The script pushes it, insmods it on Android, scrapes the `ionsec: 0x..-0x..`
+  ranges, merges them into 2 MiB-aligned blocks, drops any that would cover
+  the kernel/initrd/DTB staging addresses `prepare.py` picked, and writes
+  `boot-ionsec.dtb` (`--push` also lands it on the device as `qkx-boot.dtb`).
+- `fdtput -c` is a trap: it can create the node yet still report
+  `FDT_ERR_BADPATH` and drop the following `reg` write. Use
+  `fdtput -p -t x ... reg` -- `-p` creates the node as a side effect. Verified
+  the result parses back with `dtc -I dtb -O dts` and that the untouched
+  payload DTB is clean.
+
+### Next (needs a power-cycle)
+1. Boot Android, re-root (open the Magisk app), re-extract keys.
+2. `tools/qkx-reserve-ionsec.sh build/out-payload-nand-rw --push` -- this is
+   the step that was missing every previous time. It must run *immediately*
+   before the jump, so the snapshot is as late as possible.
+3. Jump as before (`/data/local/tmp/qkx-jump.sh`), watch the purple blink.
+4. `tail -f /run/kms_dual_image.log` and look for `frame 1 committed
+   (pattern)`. If it appears, the reservation worked and the blocker is
+   gone; then run `QKX_STAGE=2 de_service.sh` and look at the lenses.
+5. If it still wedges, the dumb-buffer pages are coming from somewhere else
+   and the next experiment is to log the allocation's physical address
+   (`debugfs`/`kms` gem dump) before the first write.

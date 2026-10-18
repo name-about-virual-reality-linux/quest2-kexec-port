@@ -41,6 +41,10 @@ bootdone() { [ -w /proc/qkx_bootdone ] && echo "$1" > /proc/qkx_bootdone; }
 
 log "reached $(uname -r)"
 
+# Immediately activate full charging rate
+echo 0 > /sys/class/power_supply/battery/input_suspend 2>/dev/null || true
+echo 1 > /sys/class/power_supply/battery/rerun_aicl 2>/dev/null || true
+
 g=/config/usb_gadget/qkx
 mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" "$g/functions/ecm.usb0"
 echo 0x1d6b > "$g/idVendor"

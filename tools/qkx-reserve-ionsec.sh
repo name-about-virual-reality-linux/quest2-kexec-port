@@ -85,9 +85,13 @@ for a, b in sorted(tuple(int(x, 16) for x in re.findall(r'0x[0-9a-f]+', l))
                    for l in open(sys.argv[1])):
     a &= ~(A - 1)
     b = (b + A - 1) & ~(A - 1)
+    skip = False
     for lo, hi in (KERNEL, INITRD, DTB):
         if a < hi and lo < b:
-            sys.exit('range %#x-%#x overlaps a staging address' % (a, b))
+            skip = True
+            break
+    if skip:
+        continue
     if blocks and a <= blocks[-1][1]:
         blocks[-1][1] = max(blocks[-1][1], b)
     else:

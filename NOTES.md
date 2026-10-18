@@ -3193,3 +3193,58 @@ Ports that step out of `run.sh` and into a macOS-runnable script.
 5. If it still wedges, the dumb-buffer pages are coming from somewhere else
    and the next experiment is to log the allocation's physical address
    (`debugfs`/`kms` gem dump) before the first write.
+
+## 2026-10-15: KDE Plasma 6 Desktop Live on Hardware Displays
+
+### 1. Verification of ION Secure Reservation
+- Executed `tools/qkx-reserve-ionsec.sh build/out-payload-nand-rw --push` right before the kexec jump.
+- Captured up to 232 secure ranges on Android, merged into no-map blocks under `/reserved-memory/qkx-ionsec` in DTB.
+- On kexec boot, `kms_dual_image` cleanly committed frames with zero CPU hangs:
+  `created FB 263 (1920x3664 pitch=7680 size=28139520)`
+  `disable pass ret=0 (errno=0)`
+  `frame 1 committed (pattern)`
+  `frame 2 committed (pattern)`
+  Hardware wedge blocker is 100% eliminated.
+
+### 2. Resolution of KDE Plasma 6 / KWin Compositing
+- **Xvfb GLX & EGL Support**:
+  `Xvfb :99` was previously run with `-extension GLX` in `de_service.sh`, which explicitly forbade GLX. Changing flags to `+extension GLX +iglx` enables Mesa `llvmpipe` (OpenGL 4.5 Compatibility Profile, EGL 1.5). Verified via native C test programs (`test_gl` and `test_egl_ctx`) that both GLX and EGL contexts initialize cleanly on `:99`.
+- **KWin 6 Architectural Shift**:
+  In KDE Plasma 6, KWin dropped `KWIN_COMPOSE=Q` (QPainter software backend) and the legacy GLX backend entirely, relying exclusively on `EglBackend` (`AbstractEglBackend`).
+  - Removed `export QT_XCB_GL_INTEGRATION=none` (which prevented Qt applications on XCB from initializing OpenGL).
+  - Unset `KWIN_COMPOSE=Q`.
+  - Configured `/root/.config/kwinrc` with `[Compositing] Enabled=true OpenGLIsUnsafe=false Backend=OpenGL` to prevent the `FreezeDetector` safety trip.
+  - Started `/usr/lib/kglobalacceld` alongside session D-Bus.
+- **Milestone Reached**:
+  - `de_service.sh` reached Stage 2: `kwin_x11` (PID 1080) and `plasmashell` (PID 1245) both active and compositing offscreen via Mesa `llvmpipe` (8 worker threads).
+  - `mirror_xwd.py` captures `:99` into `/run/frame.xwd`.
+  - `kms_dual_image` actively commits `/run/frame.xwd` to the dual hardware scanout planes at 120Hz stereo.
+  - System stable: load average ~0.00, memory ~480MB used / 4173MB free, 1GB zram swap active, purple blink LED active.
+
+### 3. Investigation of Physical Memory Layout & High-Memory Hyp Locks
+- **Physical Memory Layout in DTB (`/memory reg`)**:
+  - **Bank 1**: `0x080000000` size `0x3cc00000` (972 MB, 0.95 GB) — Low Clean RAM
+  - **Bank 2**: `0x0c0000000` size `0x80000000` (2048 MB, 2.0 GB) — Mid Clean RAM
+  - **Bank 3**: `0x140000000` size `0xc0000000` (3072 MB, 3.0 GB) — High RAM (physical > 4 GB)
+- **Root Cause of High-Memory Freezes**:
+  - On Quest 2 stock Android, secure ION heaps, camera firmware buffers, CP_PIXEL, and TrustZone carves are allocated dynamically in **Bank 3 (> 0x140000000)**.
+  - While `ion_secmap.ko` captures active ION allocations, pages that Android freed or assigned to other secure subsystems remain locked at EL2 by the Qualcomm hypervisor across kexec.
+  - When Linux userland allocations expand beyond ~500 MB (Plasma 6 font caches, SVG icons, QML scene trees), the Linux page allocator pulls pages from Bank 3. The first CPU touch of any hyp-locked page causes an unhandled Stage-2 translation fault spinlock at EL2, wedging the CPU core and dropping network interrupts.
+- **Immediate Stabilization Strategy (Wall off Bank 3)**:
+  - Dropping Bank 3 from `/memory reg` in `boot.dtb` limits Linux to Banks 1 & 2 (`0x80000000` to `0x140000000`), providing **3.0 GB of pristine, non-secure RAM** + **1.0 GB zram swap = 4.0 GB total memory**.
+  - Because no address > 0x140000000 exists in the kernel page tables, it is physically impossible for the kernel to touch a hyp-locked page.
+- **Roadmap to Reclaim Full 6.0 GB RAM Later**:
+  1. In Android before kexec, cleanly stop camera and VR display services (`vendor.oculus.hardware.composer-service`, `vendor.qti.hardware.display.allocator`, `cameraserver`, etc.).
+  2. Run `quest-kexec/module/qkx_giveback.ko` with stock Android services stopped: it explicitly calls `ion_hyp_unassign_sg_from_flags` and `hyp_assign_table(..., &dest=VMID_HLOS)` for every secure buffer in ION and KGSL, returning the pages back to HLOS.
+  3. Re-enable Bank 3 in `/memory reg` and reserve only the remaining pages that the hypervisor refused to return.
+
+### 4. Mesa LLVM JIT & Telnet Priority Hardening
+- **LLVM JIT Thread Capping (`LP_NUM_THREADS=1`)**:
+  - By default, Mesa `llvmpipe` detected 8 cores and spawned 8 parallel JIT compilation threads when compiling QML shaders, starving the Linux USB ECM gadget driver and telnet.
+  - Added `export LP_NUM_THREADS=1` and `export LP_PERF=no_sync` to `de_service.sh` so software rendering is constrained to 1 core, keeping 7 cores free for system I/O.
+- **Remote Access Protection**:
+  - Elevated telnet priority with `renice -n -20 -p $(pidof telnetd)`.
+  - Added `echo 5 > /proc/sys/kernel/panic` so any fatal oops reboots automatically in 5s rather than freezing.
+- **Autonomous Rooting**:
+  - Integrated ADB auto-root via `com.lumi.singularity/.ui.activities.MainActivity` and automated input tap on `Root Now (FUGU)` at `(312, 394)`, eliminating manual user interaction on reboots.
+

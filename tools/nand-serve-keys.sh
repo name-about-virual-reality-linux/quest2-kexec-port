@@ -43,4 +43,4 @@ else
 fi
 echo "serving from $SERVDIR on port $PORT (Ctrl-C to stop):" >&2
 ls -l "$SERVDIR" >&2
-python3 -m http.server "$PORT" --directory "$SERVDIR"
+python3 -m http.server "$PORT" --bind 0.0.0.0 --directory "$SERVDIR"

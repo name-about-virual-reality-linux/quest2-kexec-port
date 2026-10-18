@@ -34,13 +34,19 @@ Module.symvers
 *.apk
 /drm-test/kms_atomic
 /drm-test/kms_atomic2
-/drm-test/kms_test
-
-# quest-kexec's own .git, set aside during this import so it's tracked
-# here as plain files instead of a broken gitlink — not meant to be
-# committed itself.
-/quest-kexec/.git-disabled-temporarily/
 /drm-test/kms_atomic3
+/drm-test/kms_atomic4
+/drm-test/kms_atomic5
+/drm-test/kms_test
+/drm-test/kms_play
+/drm-test/kms_play_vr
+/drm-test/test_decode
+/tools/dmcreate
+/tools/dmstat
+/tools/kadd
+/tools/kdump
+/tools/kpolicy
+/tools/mkfs.ext4
 /drm-test/regdump/android/
 /drm-test/regdump/target/
 /drm-test/regdump/regon_target/

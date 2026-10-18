@@ -35,16 +35,17 @@ export XDG_CURRENT_DESKTOP=KDE
 export KDE_SESSION_VERSION=6
 export KDE_NO_IPV6=1
 
-# Software rendering everywhere: Xvfb has no DRI, and llvmpipe is plenty for
-# a desktop that is snapshotted a few times a second.
-export QT_QPA_PLATFORM=xcb
-export QT_QUICK_BACKEND=software
-export QT_XCB_GL_INTEGRATION=none
+# Software rendering everywhere: Xvfb has no hardware DRI, so llvmpipe
+# provides OpenGL and EGL offscreen in RAM.
 export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export MESA_LOADER_DRIVER_OVERRIDE=kms_swrast
+export VK_ICD_FILENAMES=""
+export LP_NUM_THREADS=1
 
 # Presenter geometry/behaviour. QKX_ROT=1 is the eyes-measured CCW rotation.
 export QKX_ROT=1
-export QKX_DT_MS="${QKX_PUMP_MS:-200}"
+export QKX_DT_MS="${QKX_PUMP_MS:-1000}"
 export QKX_HOLD=0
 # Do NOT set QKX_NODISABLE: the disable pass is what gives the modeset a
 # clean regulator sequence.
@@ -52,7 +53,7 @@ unset QKX_NODISABLE
 
 STAGE="${QKX_STAGE:-auto}"
 MIRROR="${QKX_MIRROR:-1}"
-export KWIN_COMPOSE="${QKX_COMPOSE:-Q}"
+export KWIN_COMPOSE="${QKX_COMPOSE:-}"
 
 RUN=/run
 FRAME="$RUN/frame.xwd"
@@ -113,6 +114,10 @@ start_presenter() {
 	# The backlight node appears with the display driver, not before.
 	echo 255 >/sys/class/backlight/panel0-backlight/brightness 2>/dev/null
 	log "presenter up (pid $PRESENTER_PID, frame=$FRAME)"
+	# Protect DRM and GPU from other processes: kms_dual_image already holds /dev/dri/card0 open.
+	# Hiding /dev/dri and /dev/kgsl prevents Mesa/Qt/KWin from probing MSM DRM / Adreno KGSL and hanging the SoC.
+	chmod 000 /dev/dri/* /dev/kgsl* 2>/dev/null || true
+	rm -f /dev/kgsl* 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------- X :99
@@ -122,7 +127,7 @@ start_x() {
 		return 1
 	fi
 	Xvfb :99 -screen 0 3664x1920x24 \
-		-extension DRI2 -extension DRI3 -extension GLX \
+		+extension GLX +iglx \
 		-ac -noreset >"$RUN/xvfb.log" 2>&1 &
 	XVFB_PID=$!
 	local i=0
@@ -207,6 +212,12 @@ EOF
 [Basic Settings]
 Indexing-Enabled=false
 EOF
+	# Configure KWin to run cleanly without compositing on Xvfb (software 2D mode)
+	cat <<'EOF' >/root/.config/kwinrc
+[Compositing]
+Enabled=false
+OpenGLIsUnsafe=true
+EOF
 }
 
 stage2() {
@@ -220,26 +231,39 @@ stage2() {
 
 	seed_kde_config
 
+	export LIBGL_ALWAYS_SOFTWARE=1
+	export GALLIUM_DRIVER=llvmpipe
+	export LP_NUM_THREADS=1
+	export LP_PERF=no_sync
+	export MESA_DEBUG=silent
+	export QSG_RHI_BACKEND=software
+	export QT_QUICK_BACKEND=software
+	export QT_QPA_PLATFORM=xcb
+
 	if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && have dbus-launch; then
 		eval "$($TMO dbus-launch --sh-syntax 2>/dev/null)" || true
 		if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
-			log "session dbus started"
+			log "session dbus started: $DBUS_SESSION_BUS_ADDRESS"
+			export DBUS_SESSION_BUS_ADDRESS
 		else
 			log "warn: no session dbus; Plasma will run degraded"
 		fi
 	fi
 
-	# KWIN_COMPOSE=Q is the software compositor: Xvfb advertises no GLX, so
-	# KWin's OpenGL default would fail here.
-	KWIN_COMPOSE="$KWIN_COMPOSE" kwin_x11 >"$RUN/kwin.log" 2>&1 &
+	# Start kglobalacceld if available
+	if [ -x /usr/lib/kglobalacceld ]; then
+		nohup /usr/lib/kglobalacceld >"$RUN/kglobalacceld.log" 2>&1 &
+	fi
+
+	nohup kwin_x11 --replace >"$RUN/kwin.log" 2>&1 &
 	KWIN_PID=$!
-	sleep 3
+	sleep 4
 	if ! kill -0 "$KWIN_PID" 2>/dev/null; then
 		log "ERR kwin_x11 exited during startup (see $RUN/kwin.log)"
 		return 1
 	fi
 
-	plasmashell --no-respawn >"$RUN/plasmashell.log" 2>&1 &
+	nohup plasmashell --no-respawn >"$RUN/plasmashell.log" 2>&1 &
 	SHELL_PID=$!
 	sleep 8
 	if ! kill -0 "$SHELL_PID" 2>/dev/null; then
@@ -275,7 +299,6 @@ enable_swap
 start_presenter || exit 1
 start_x || exit 1
 prime_frame
-start_pump
 
 case "$STAGE" in
 1)
@@ -293,5 +316,7 @@ case "$STAGE" in
 	fi
 	;;
 esac
+
+start_pump
 
 log "ready"
